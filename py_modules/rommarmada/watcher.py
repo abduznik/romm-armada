@@ -27,6 +27,9 @@ WAKE_GAP = 30.0          # a pause this long between ticks means the device slep
 EXIT_SETTLE = 3.0        # after the emulator is gone, let the card finish landing on disk
 INSTALL_POLL = 60.0
 MIN_PLAY_SECONDS = 30
+UNKNOWN_REPORT_AFTER = 20.0     # an emulator that has run this long with no game recognised is described in the log, once
+SYSTEM_PATHS = ("/usr/", "/lib", "/etc/", "/opt/", "/var/lib/", "/var/cache/", "/var/tmp/", "/tmp/.mount_", "/run/user/",
+                "/dev/", "/proc/", "/sys/")
 
 
 class Watcher:
@@ -36,6 +39,7 @@ class Watcher:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self.session: dict | None = None
+        self._held: int | None = None        # the one game whose disc the emulator held open on the last look
         self._next_pull: float | None = None
         self._next_install_poll = 0.0
         self._last_wall = time.time()
@@ -97,25 +101,52 @@ class Watcher:
 
     # -- the emulator -------------------------------------------------------------------------------------------
 
+    def _identify(self, found: list) -> tuple[str | None, dict | None, str]:
+        """The installed game the emulator is playing: (disc path, game, how it was found).
+
+        Started with a disc on its command line (ES-DE, a launcher): that one. Started from the emulator's own menu: the
+        disc image it keeps open. Scanning the game list opens discs for a moment, so a game counts only when it is the one
+        game held open on two looks in a row."""
+        rom = next((i.rom_path() for i in found if i.rom_path()), None)
+        if rom:
+            return rom, self.svc.manifest.by_path(rom), "command line"
+        held = {g["rom_id"]: (path, g) for inst in found for path, g in self.svc.manifest.by_paths(inst.open_files())}
+        if len(held) == 1:
+            rid, (path, game) = next(iter(held.items()))
+            if self._held == rid:
+                return path, game, "open disc image"
+            self._held = rid
+        else:
+            self._held = None
+        return None, None, ""
+
     def _watch_emulator(self) -> None:
         found = emulators.find_instances(emulators.all_ps2_process_names(), self.svc.proc_root)
         if found and self.session is None:
             inst = found[0]
-            rom = next((i.rom_path() for i in found if i.rom_path()), None)
-            game = self.svc.manifest.by_path(rom) if rom else None
+            rom, game, how = self._identify(found)
             self.session = {"started": time.time(), "rom_path": rom, "rom_id": game["rom_id"] if game else None,
-                            "name": game["name"] if game else None, "pids": {i.pid for i in found}, "emulator": inst.comm}
-            log.info("emulator started: %s %s", inst.comm, game["name"] if game else (rom or ""))
+                            "name": game["name"] if game else None, "pids": {i.pid for i in found}, "emulator": inst.comm,
+                            "found_by": how if game else ""}
+            log.info("emulator started: %s %s", inst.comm, game["name"] if game else (rom or "(no game on its command line yet)"))
             self.svc.emit("emulator_started", {"rom_id": self.session["rom_id"], "name": self.session["name"]})
         elif found and self.session is not None:
             self.session["pids"] |= {i.pid for i in found}
             if self.session["rom_id"] is None:
-                rom = next((i.rom_path() for i in found if i.rom_path()), None)
-                game = self.svc.manifest.by_path(rom) if rom else None
+                rom, game, how = self._identify(found)
                 if game:
-                    self.session.update(rom_path=rom, rom_id=game["rom_id"], name=game["name"])
+                    self.session.update(rom_path=rom, rom_id=game["rom_id"], name=game["name"], found_by=how)
+                    log.info("the emulator is playing %s (found by its %s)", game["name"], how)
+                    self.svc.emit("emulator_started", {"rom_id": game["rom_id"], "name": game["name"]})
+                elif not self.session.get("described") and time.time() - self.session["started"] > UNKNOWN_REPORT_AFTER:
+                    self.session["described"] = True
+                    held = [p for i in found for p in i.open_files() if not p.startswith(SYSTEM_PATHS)]
+                    log.info("no installed game recognised after %ss. Command line: %s. Files held open: %s",
+                             int(time.time() - self.session["started"]), " ".join(found[0].cmdline[1:]) or "-",
+                             ", ".join(held[:8]) or "none")
         elif not found and self.session is not None:
             session, self.session = self.session, None
+            self._held = None
             self._on_exit(session)
 
     def _on_exit(self, session: dict) -> None:
@@ -126,7 +157,15 @@ class Watcher:
         if session["rom_id"] and s.get("saves.playtime") and seconds >= MIN_PLAY_SECONDS:
             self._queue_playtime(session, seconds)
         if s.signed_in and s.get("saves.enabled") and s.get("saves.push_on_exit"):
-            ids = [session["rom_id"]] if session["rom_id"] else self._supported_ids()
+            if session["rom_id"] and session.get("found_by") != "open disc image":
+                ids = [session["rom_id"]]
+            else:
+                # the game is unknown, or was told from its open disc: the emulator's own menu can switch games without closing,
+                # so every installed game is checked, this one first. Only the ones whose save changed go to RomM.
+                ids = self._supported_ids()
+                if session["rom_id"] in ids:
+                    ids.remove(session["rom_id"])
+                    ids.insert(0, session["rom_id"])
             self._spawn(self._push_after_exit, ids)
         self._wake.set()
 

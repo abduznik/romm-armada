@@ -113,7 +113,7 @@ export type Diagnostics = {
   library_free: string;
 };
 
-export type BiosFile = { name: string; size: number; kind: "bios" | "extra" | "other" };
+export type BiosFile = { name: string; size: number; kind: "bios" | "extra" };
 
 /** One of RomM's firmware files, and what the emulator's folder says about it. */
 export type BiosItem = {
@@ -128,7 +128,7 @@ export type BiosRemote = {
 
 export type BiosStatus = {
   emulator: { name: string; id: string; running: boolean };
-  dir: string; dir_exists: boolean; local: BiosFile[]; has_bios: boolean; remote: BiosRemote | null;
+  dir: string; dir_exists: boolean; local: BiosFile[]; others: number; has_bios: boolean; remote: BiosRemote | null;
 };
 
 export type BiosReport = {

@@ -264,21 +264,57 @@ def sigil_options(cfg: CardConfig) -> dict[str, str]:
 BIOS_MIN_BYTES = 4 * 1024 * 1024      # the emulator only considers files from 4 to 8 MiB (pcsx2/ps2/BiosTools.cpp)
 BIOS_MAX_BYTES = 8 * 1024 * 1024
 BIOS_EXTRAS = (".rom1", ".rom2", ".erom", ".nvm", ".mec")      # optional parts that sit beside a BIOS image
+ROMDIR_SCAN_BYTES = 512 * 1024        # where the emulator looks for the image's ROM directory
 
 
 def bios_dir(data_dir: Path) -> Path:
-    """Where the emulator looks for BIOS images: [Folders] Bios of PCSX2.ini, `bios` under the data folder by default."""
+    """Where the emulator looks for BIOS images: [Folders] Bios of PCSX2.ini, `bios` under the data folder by default.
+    A relative setting is relative to the data folder (the Armada's ARMSX2 ships `../../Downloads`)."""
     raw = read_ini(Path(data_dir) / "inis" / "PCSX2.ini").get("Folders", {}).get("Bios", "bios") or "bios"
-    return Path(raw) if os.path.isabs(raw) else Path(data_dir) / raw
+    return Path(os.path.realpath(raw if os.path.isabs(raw) else Path(data_dir) / raw))
 
 
-def list_bios(directory: Path) -> list[dict]:
-    """What is in the BIOS folder. kind: bios (the right size for a BIOS image; the emulator checks the rest), extra, other."""
-    out: list[dict] = []
+_image_cache: dict[tuple, bool] = {}
+
+
+def is_bios_image(path: Path) -> bool:
+    """A PS2 BIOS image: 4 to 8 MiB, with the ROM directory the emulator reads, an entry named RESET on a 16-byte
+    boundary in the first 512 KiB. A folder like Downloads holds many files of that size; only this tells them apart."""
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return False
+    if not BIOS_MIN_BYTES <= st.st_size <= BIOS_MAX_BYTES:
+        return False
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    hit = _image_cache.get(key)
+    if hit is not None:
+        return hit
+    found = False
+    try:
+        with open(path, "rb") as f:
+            head = f.read(ROMDIR_SCAN_BYTES)
+        pos = head.find(b"RESET")
+        while pos != -1 and not found:
+            found = pos % 16 == 0
+            pos = head.find(b"RESET", pos + 1)
+    except OSError:
+        return False
+    if len(_image_cache) > 256:
+        _image_cache.clear()
+    _image_cache[key] = found
+    return found
+
+
+def list_bios(directory: Path) -> dict:
+    """What the BIOS folder holds that matters: {files: [{name, size, kind}], others: n}. kind: bios (a BIOS image) or
+    extra (a part that goes with one). `others` counts everything else in the folder, which may be the Downloads folder."""
+    files: list[dict] = []
+    others = 0
     try:
         entries = sorted(Path(directory).iterdir())
     except OSError:
-        return out
+        return {"files": files, "others": others}
     for p in entries:
         if p.name.startswith("."):      # our own half-finished downloads, the file manager's leftovers
             continue
@@ -289,13 +325,12 @@ def list_bios(directory: Path) -> list[dict]:
         except OSError:
             continue
         if p.name.lower().endswith(BIOS_EXTRAS):
-            kind = "extra"
-        elif BIOS_MIN_BYTES <= size <= BIOS_MAX_BYTES:
-            kind = "bios"
+            files.append({"name": p.name, "size": size, "kind": "extra"})
+        elif is_bios_image(p):
+            files.append({"name": p.name, "size": size, "kind": "bios"})
         else:
-            kind = "other"
-        out.append({"name": p.name, "size": size, "kind": kind})
-    return out
+            others += 1
+    return {"files": files, "others": others}
 
 
 # --- running programs ------------------------------------------------------------------------------
@@ -308,6 +343,25 @@ class Instance:
     exe: str
     cmdline: list
     started: float                # seconds since boot, as /proc/<pid>/stat has it (0 if unknown)
+    proc_root: str = "/proc"
+
+    def open_files(self) -> list[str]:
+        """Paths of the files the process holds open. The emulator keeps the disc image open while a game runs, which says
+        which game it is even when it was started from its own menu, with nothing on the command line."""
+        base = os.path.join(self.proc_root, str(self.pid), "fd")
+        try:
+            names = os.listdir(base)
+        except OSError:
+            return []
+        out: list[str] = []
+        for n in sorted(names, key=lambda x: (int(x) if x.isdigit() else -1, x)):
+            try:
+                target = os.readlink(os.path.join(base, n))
+            except OSError:
+                continue
+            if target.startswith("/") and not target.startswith(("/dev/", "/proc/", "/sys/")) and not target.endswith(" (deleted)"):
+                out.append(target)
+        return out
 
     def rom_path(self) -> str | None:
         """The disc image the emulator was started with: after `--` if given, else the last argument that is a file."""
@@ -356,7 +410,7 @@ def find_instances(process_names: tuple, proc_root: str = "/proc") -> list[Insta
             started = float(stat[stat.rindex(")") + 2:].split()[19])  # starttime, clock ticks since boot
         except (OSError, ValueError, IndexError):
             pass
-        found.append(Instance(int(e), comm, exe, cmd, started))
+        found.append(Instance(int(e), comm, exe, cmd, started, proc_root))
     return found
 
 

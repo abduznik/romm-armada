@@ -154,6 +154,20 @@ class Manifest:
         with self._lock:
             return [dict(g) for g in self._games.values()]
 
+    def by_paths(self, paths: list[str]) -> list[tuple[str, dict]]:
+        """The installed games that any of `paths` belongs to, each with the path that matched: what a process holds open."""
+        reals = [(p, os.path.realpath(p)) for p in paths]
+        with self._lock:
+            games = [(os.path.realpath(g["main_file"]) if g.get("main_file") else None,
+                      os.path.realpath(g["top"]) if g.get("top") else None, g) for g in self._games.values()]
+            out: list[tuple[str, dict]] = []
+            for p, real in reals:
+                for main, top, g in games:
+                    if (main and real == main) or (top and (real == top or real.startswith(top + os.sep))):
+                        out.append((p, dict(g)))
+                        break
+        return out
+
     def by_path(self, path: str) -> dict | None:
         """The installed game whose files include `path` (what a running emulator was started with)."""
         real = os.path.realpath(path)

@@ -467,6 +467,26 @@ class EmulatorTests(Env):
         self.assertEqual([i.pid for i in found], [202])
         self.assertEqual(found[0].rom_path(), "/roms/ps2/Game.iso")
 
+    def test_the_appimage_as_it_runs_on_the_handheld_and_the_files_it_holds_open(self):
+        """The log from a real Armada: the process is called AppRun (the AppImage's entry point, a link to armsx2-qt), the
+        game was started from the emulator's menu, so nothing on the command line says which one."""
+        from rommarmada import emulators
+        proc = self.tmp / "proc"
+        d = proc / "3141"
+        (d / "fd").mkdir(parents=True)
+        (d / "comm").write_text("AppRun\n")
+        (d / "cmdline").write_bytes(b"/tmp/.mount_ARMSX2abcdef/AppRun\0")
+        os.symlink("/tmp/.mount_ARMSX2abcdef/usr/bin/armsx2-qt", d / "exe")
+        for n, target in (("0", "/dev/null"), ("1", "socket:[4242]"), ("2", "/proc/self/stat"), ("3", "anon_inode:[eventfd]"),
+                          ("4", "/var/home/armada/ROMs/ps2/Bully.iso"), ("5", "/run/media/mmcblk0p1/ROMs/ps2/Other.iso"),
+                          ("6", "/var/home/armada/.config/ARMSX2/logs/emulog.txt (deleted)")):
+            os.symlink(target, d / "fd" / n)
+        found = emulators.find_instances(emulators.all_ps2_process_names(), str(proc))
+        self.assertEqual([i.pid for i in found], [3141])
+        self.assertIsNone(found[0].rom_path())
+        self.assertEqual(found[0].open_files(), ["/var/home/armada/ROMs/ps2/Bully.iso", "/run/media/mmcblk0p1/ROMs/ps2/Other.iso"])
+        self.assertEqual(emulators.Instance(1, "x", "", [], 0.0, str(proc)).open_files(), [], "a process that is gone holds nothing")
+
 
 class LibraryTests(Env):
     def test_platform_folders(self):

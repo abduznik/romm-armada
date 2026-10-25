@@ -19,7 +19,7 @@ The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Arm
 
 ## Install
 
-1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.2.0.zip`.
+1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.2.1.zip`.
 2. Open the plugin from Decky's Quick Access menu.
 
 ## Connect
@@ -38,7 +38,9 @@ The device registers itself with RomM, so its saves are tracked per device ("con
 
 Sync works per game, in RomM's `autosave` slot:
 
-1. **After you close the emulator**, the plugin looks at that game's saves and uploads them if they changed.
+1. **After you close the emulator**, the plugin looks at that game's saves and uploads them if they changed. It knows
+   the game from the emulator's command line or, when you started it from ARMSX2's own menu, from the disc image the
+   emulator keeps open; that game's play time is reported to RomM too.
 2. **While no emulator runs** (at start, every N minutes, after waking from sleep) it brings down saves that are
    newer on RomM, and when you install a game it fetches the save the other devices made.
 3. **Nothing is replaced on a guess.** If this device never synced a game and RomM already has a *different* save,
@@ -72,8 +74,10 @@ for the PlayStation 2 platform (in RomM: the platform, then *Firmware*) beside w
 - A file that is already there with the same content is left alone, also if you renamed it.
 - A different file with the same name is kept. Replacing it asks first and copies the old one to the plugin's backups.
 - Each download is checked against RomM's size, MD5, SHA-1 and CRC32 before it gets its final name.
-- The folder is `[Folders] Bios` in the emulator's `PCSX2.ini`, `~/.config/ARMSX2/bios` by default. ARMSX2 and PCSX2
-  pick up a BIOS in that folder by themselves.
+- The folder is `[Folders] Bios` in the emulator's `PCSX2.ini`, `~/.config/ARMSX2/bios` by default (the Armada's
+  ARMSX2 uses `~/Downloads`). ARMSX2 and PCSX2 pick up a BIOS in that folder by themselves. A shared folder is fine:
+  only BIOS files are listed (a file counts as one when it is 4 to 8 MiB and has the ROM directory the emulator
+  looks for), the rest is counted and left alone.
 - It needs the *firmware read* permission. A sign-in made with plugin 0.1.0 lacks it: the screen says so, and pairing
   again fixes it.
 
@@ -124,7 +128,7 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
   server: firmware uploaded to a platform, listed, downloaded and checked into the BIOS folder, and its refusal of a
   sign-in that lacks the firmware permission.
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 152 backend tests (downloads with resume and corruption, save sync, BIOS install, the watcher, remote installs, the
+- 162 backend tests (downloads with resume and corruption, save sync, BIOS install, the watcher, remote installs, the
   Decky RPC layer under a stand-in for Decky's module) and 20 rendered panel scenarios (typed pairing code, device
   approval, browsing, downloading, conflicts, BIOS files, settings, disconnecting). The panel also type-checks against
   `@decky/ui` 4.11.
@@ -133,7 +137,7 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
 
 **Not verified**
 
-- The BIOS download on a handheld (0.2.0), Steam's real rendering of the new screens, and gamepad navigation of them.
+- The BIOS download on a handheld (0.2.x), Steam's real rendering of the new screens, and gamepad navigation of them.
 - ARMSX2's own memory cards beyond that first play session (the tests build cards with sigil), and ES-DE starting a
   downloaded game.
 - Which helper build gets picked on the handheld: Settings → About shows it (`aarch64` is expected).

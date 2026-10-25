@@ -362,7 +362,9 @@ class RealRommTests(unittest.TestCase):
         pid = next(p["id"] for p in plats if p["slug"] == "ps2")
         files = {}
         for name, seed in (("scph70012.bin", b"seven"), ("scph39001.bin", b"three")):
-            files[name] = (hashlib.sha256(seed).digest() * (4 * 1024 * 1024 // 32))[:4 * 1024 * 1024]
+            data = bytearray((hashlib.sha256(seed).digest() * (4 * 1024 * 1024 // 32))[:4 * 1024 * 1024])
+            data[10048:10064] = b"RESET" + b"\0" * 11            # the ROM directory entry a real BIOS has there
+            files[name] = bytes(data)
             body, ctype = multipart(None, [("files", name, files[name], "application/octet-stream")])
             self.admin.request("POST", "/api/firmware", params={"platform_id": pid}, data=body,
                                headers={"Content-Type": ctype}, timeout=60, retries=0)

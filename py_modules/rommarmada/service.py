@@ -134,7 +134,7 @@ class Service:
     @staticmethod
     def _bios_summary(r: emulators.Resolved) -> dict:
         folder = emulators.bios_dir(r.data_dir)
-        count = sum(1 for f in emulators.list_bios(folder) if f["kind"] == "bios")
+        count = sum(1 for f in emulators.list_bios(folder)["files"] if f["kind"] == "bios")
         return {"dir": str(folder), "has_bios": count > 0, "count": count}
 
     def _helper_view(self) -> dict:
@@ -332,10 +332,11 @@ class Service:
 
     def uninstall(self, rom_id: int) -> dict:
         game = self.manifest.get(rom_id)
-        if game and any(emulators.find_instances(emulators.all_ps2_process_names(), self.proc_root)):
-            main = game.get("main_file")
+        if game:
             for inst in emulators.find_instances(emulators.all_ps2_process_names(), self.proc_root):
-                if main and inst.rom_path() and os.path.realpath(inst.rom_path()) == os.path.realpath(main):
+                # on its command line, or (started from the emulator's own menu) the disc image it holds open
+                held = ([inst.rom_path()] if inst.rom_path() else []) + inst.open_files()
+                if any(g["rom_id"] == rom_id for _, g in self.manifest.by_paths(held)):
                     return {"ok": False, "message": "The game is running"}
         out = self.downloads.uninstall(rom_id)
         return {"ok": True, **out}
@@ -475,10 +476,10 @@ class Service:
     def bios_status(self, remote: bool = True) -> dict:
         """The emulator's BIOS folder as it is, and with `remote` what RomM offers for it."""
         r, folder = self._ps2()
-        local = emulators.list_bios(folder)
+        listing = emulators.list_bios(folder)
         return {"emulator": {"name": r.profile.name, "id": r.profile.id, "running": self._ps2_running()},
-                "dir": str(folder), "dir_exists": folder.is_dir(), "local": local,
-                "has_bios": any(f["kind"] == "bios" for f in local),
+                "dir": str(folder), "dir_exists": folder.is_dir(), "local": listing["files"], "others": listing["others"],
+                "has_bios": any(f["kind"] == "bios" for f in listing["files"]),
                 "remote": self._bios_remote(r, folder)[0] if remote else None}
 
     def bios_install(self, ids: list[int] | None = None, overwrite: bool = False) -> dict:

@@ -10,10 +10,14 @@ from test_service import SvcBase
 MIB = 1024 * 1024
 
 
-def bios_bytes(seed: str, size: int = 4 * MIB) -> bytes:
-    """A deterministic stand-in for a BIOS image (the plugin only cares about size and hashes)."""
+def bios_bytes(seed: str, size: int = 4 * MIB, rom_directory: bool = True) -> bytes:
+    """A deterministic stand-in for a BIOS image: 4 MiB, with the ROM directory entry (RESET, on a 16-byte boundary) the
+    emulator looks for. `rom_directory=False` makes a file of the same size that is not a BIOS, like a photo in Downloads."""
     block = hashlib.sha256(seed.encode()).digest()
-    return (block * (size // len(block) + 1))[:size]
+    data = bytearray((block * (size // len(block) + 1))[:size])
+    if rom_directory:
+        data[10048:10064] = b"RESET" + b"\0" * 11            # where a real SCPH-70004 has its ROM directory
+    return bytes(data)
 
 
 class BiosBase(SvcBase):
@@ -56,10 +60,55 @@ class StatusTests(BiosBase):
         (self.folder / "readme.txt").write_text("not a bios")
         (self.folder / "scph70012.bin.rom1").write_bytes(b"x" * 1000)
         (self.folder / "tiny.bin").write_bytes(b"x" * (MIB))
+        (self.folder / "holiday.mp4").write_bytes(bios_bytes("a video", 5 * MIB, rom_directory=False))   # the right size, not a BIOS
         self.assertFalse(self.svc.overview()["emulator"]["bios"]["has_bios"])      # none of these is a BIOS image
         (self.folder / "scph70012.bin").write_bytes(self.a)
         o = self.svc.overview()["emulator"]["bios"]
         self.assertEqual((o["has_bios"], o["count"]), (True, 1))
+
+    def test_a_shared_folder_shows_only_the_bios_files_and_counts_the_rest(self):
+        """The Armada's ARMSX2 points its BIOS folder at Downloads, which holds all kinds of files."""
+        data = self.home / ".config" / "ARMSX2"
+        (data / "inis").mkdir(parents=True)
+        (data / "inis" / "PCSX2.ini").write_text("[Folders]\nBios = ../../Downloads\n")
+        downloads = self.home / "Downloads"
+        downloads.mkdir()
+        (downloads / "SCPH-70004.BIN").write_bytes(self.a)
+        for ext in ("EROM", "ROM1", "ROM2", "NVM", "MEC"):
+            (downloads / f"SCPH-70004.{ext}").write_bytes(b"x" * 100)
+        (downloads / "Reroll-multiarch-arm7.zip").write_bytes(b"z" * 3_500_000)
+        (downloads / "holiday.mp4").write_bytes(bios_bytes("a video", 5 * MIB, rom_directory=False))
+        (downloads / "Pp.txt").write_text("notes")
+        (downloads / "somedir").mkdir()
+        st = self.svc.bios_status(remote=False)
+        self.assertEqual(st["dir"], str(downloads), "no '..' in the path the screen shows")
+        self.assertEqual(sorted(f["name"] for f in st["local"]),
+                         ["SCPH-70004.BIN", "SCPH-70004.EROM", "SCPH-70004.MEC", "SCPH-70004.NVM", "SCPH-70004.ROM1", "SCPH-70004.ROM2"])
+        self.assertEqual({f["name"]: f["kind"] for f in st["local"]}["SCPH-70004.BIN"], "bios")
+        self.assertEqual(st["others"], 3)                           # the zip, the video and the text file; the folder is not a file
+        self.assertTrue(st["has_bios"])
+        self.assertEqual(self.svc.overview()["emulator"]["bios"], {"dir": str(downloads), "has_bios": True, "count": 1})
+
+    def test_what_the_emulator_would_accept_as_a_bios(self):
+        from rommarmada import emulators
+        d = self.home / "probe"
+        d.mkdir()
+
+        def put(name, data):
+            (d / name).write_bytes(data)
+            return emulators.is_bios_image(d / name)
+        self.assertTrue(put("real.bin", bios_bytes("a")))
+        self.assertTrue(put("eight.bin", bios_bytes("b", 8 * MIB)))
+        self.assertFalse(put("no-directory.bin", bios_bytes("c", rom_directory=False)))
+        self.assertFalse(put("too-small.bin", bios_bytes("d", 3 * MIB)))
+        self.assertFalse(put("too-big.bin", bios_bytes("e", 9 * MIB)))
+        crooked = bytearray(bios_bytes("f", rom_directory=False))
+        crooked[10049:10064] = b"RESET" + b"\0" * 10             # the name is there, but not on a 16-byte boundary
+        self.assertFalse(put("crooked.bin", bytes(crooked)))
+        late = bytearray(bios_bytes("g", rom_directory=False))
+        late[600_000:600_016] = b"RESET" + b"\0" * 11            # past the first 512 KiB, where the emulator stops looking
+        self.assertFalse(put("late.bin", bytes(late)))
+        self.assertFalse(emulators.is_bios_image(d / "missing.bin"))
 
     def test_the_emulators_own_bios_folder_setting_is_followed(self):
         data = self.home / ".config" / "ARMSX2"
@@ -69,9 +118,11 @@ class StatusTests(BiosBase):
         done = self.svc.bios_install()
         self.assertTrue(done["ok"], done)
         self.assertTrue((self.home / "my-bios" / "scph70012.bin").is_file())
-        # a relative setting is relative to the data folder
+        # a relative setting is relative to the data folder, and is shown without the '..' segments
         (data / "inis" / "PCSX2.ini").write_text("[Folders]\nBios = firmware\n")
         self.assertEqual(self.svc.bios_status(False)["dir"], str(data / "firmware"))
+        (data / "inis" / "PCSX2.ini").write_text("[Folders]\nBios = ../elsewhere/./bios\n")
+        self.assertEqual(self.svc.bios_status(False)["dir"], str(data.parent / "elsewhere" / "bios"))
 
     def test_firmware_romm_lost_from_its_disk_is_not_offered(self):
         self.mock.add_firmware(self.pid, "gone.bin", bios_bytes("gone"), missing=True)

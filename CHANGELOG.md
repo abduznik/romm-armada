@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1
+
+Found by reading the log of 0.2.0 on a real Armada.
+
+- A game started from ARMSX2's own menu is now recognised by the disc image the emulator keeps open. The log used to
+  say "unknown game" for it, which also meant no play time reached RomM. A game counts when it is the only one held
+  open on two looks in a row, so the game list scan (which opens discs for a moment) cannot fool it. When the game was
+  found this way, every installed game's save is still checked on exit (this one first), because the menu can switch
+  games without closing the emulator.
+- BIOS: the Armada's ARMSX2 is set to use `~/Downloads` as its BIOS folder (`Bios = ../../Downloads`). The screen now
+  shows that folder without the `..`, lists only BIOS files (the other files are counted, not listed), and a file
+  counts as a BIOS image when it has the ROM directory the emulator looks for, not by its size alone, so a folder like
+  Downloads cannot hide the "no BIOS" warning.
+- The log says what each save sync did and why.
+
 ## 0.2.0
 
 - **BIOS files from RomM, when you ask.** The home screen says when the emulator's BIOS folder has none and offers

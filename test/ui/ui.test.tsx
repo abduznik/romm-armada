@@ -53,7 +53,7 @@ const biosItem = (over: any = {}) => ({
 
 const biosStatus = (over: any = {}) => ({
   ok: true, emulator: { name: "ARMSX2", id: "armsx2", running: false },
-  dir: "/home/armada/.config/ARMSX2/bios", dir_exists: false, local: [], has_bios: false,
+  dir: "/home/armada/.config/ARMSX2/bios", dir_exists: false, local: [], others: 0, has_bios: false,
   remote: {
     ok: true, platform: { id: 1, name: "PlayStation 2" }, reason: "", message: "",
     items: [biosItem(), biosItem({ id: 2, name: "scph39001.bin", verified: false })],
@@ -443,8 +443,8 @@ describe("the panel", () => {
     backendWith({
       overview: () => noBios(),
       bios_status: () => biosStatus({
-        emulator: { name: "ARMSX2", id: "armsx2", running: true }, dir_exists: true,
-        local: [{ name: "readme.txt", size: 20, kind: "other" }],
+        emulator: { name: "ARMSX2", id: "armsx2", running: true }, dir: "/var/home/armada/Downloads", dir_exists: true,
+        local: [{ name: "SCPH-70004.NVM", size: 1024, kind: "extra" }], others: 12,
         remote: { ok: true, platform: { id: 1, name: "PlayStation 2" }, items: [], reason: "empty", message: "RomM has no firmware for PlayStation 2. Add the BIOS in RomM (open the platform, then Firmware), or put the file in the folder below yourself." },
       }),
     });
@@ -452,8 +452,10 @@ describe("the panel", () => {
     await settle(3);
     await click(h, "Get the BIOS from RomM");
     assert.match(text(h), /RomM has no firmware for PlayStation 2/);
-    assert.match(text(h), /readme\.txt/);
-    assert.match(text(h), /not a BIOS image/);
+    assert.match(text(h), /\/var\/home\/armada\/Downloads/, "the folder the emulator is set to use, without '..' in it");
+    assert.match(text(h), /SCPH-70004\.NVM.*goes with a BIOS/);
+    assert.match(text(h), /12 other files in this folder are not BIOS files and are left alone\./, "a shared folder is not listed file by file");
+    assert.doesNotMatch(text(h), /readme|Reroll/);
     assert.match(text(h), /ARMSX2 is running\. Files can be added now, not replaced\./);
     assert.equal(buttons(h).some((b) => /Install/.test(b.textContent ?? "")), false);
     await h.unmount();

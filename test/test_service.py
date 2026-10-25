@@ -38,7 +38,9 @@ class SvcBase(Env):
             time.sleep(0.05)
         self.fail(f"timed out waiting for {what}")
 
-    def start_emulator(self, rom_path=None, pid=4242):
+    def start_emulator(self, rom_path=None, pid=4242, holds=()):
+        """A running emulator in the fake /proc. `holds`: files it has open (what ARMSX2 does with the disc of the game it
+        runs, even when it was started from its own menu and has no disc on its command line)."""
         d = self.proc / str(pid)
         d.mkdir(parents=True, exist_ok=True)
         cmd = ["/tmp/.mount_ARMSX2abc/usr/bin/armsx2-qt", "-batch", "-fullscreen"] + (["--", rom_path] if rom_path else [])
@@ -48,6 +50,17 @@ class SvcBase(Env):
             os.symlink("/tmp/.mount_ARMSX2abc/usr/bin/armsx2-qt", d / "exe")
         except FileExistsError:
             pass
+        self.hold(*holds, pid=pid)
+
+    def hold(self, *paths, pid=4242):
+        fd = self.proc / str(pid) / "fd"
+        shutil.rmtree(fd, ignore_errors=True)
+        fd.mkdir()
+        os.symlink("/dev/null", fd / "0")
+        os.symlink("socket:[12345]", fd / "1")
+        os.symlink(str(self.home / ".config" / "ARMSX2" / "logs" / "emulog.txt"), fd / "2")
+        for i, target in enumerate(paths):
+            os.symlink(str(target), fd / str(3 + i))
 
     def stop_emulator(self, pid=4242):
         shutil.rmtree(self.proc / str(pid), ignore_errors=True)
@@ -151,9 +164,9 @@ class WatcherTests(SvcBase):
         self.entry = self.install_ps2_game_again()
         self.card = self.home / ".config" / "ARMSX2" / "memcards" / "Mcd001.ps2"
 
-    def install_ps2_game_again(self):
+    def install_ps2_game_again(self, rid=None):
         from rommarmada import library
-        rom = self.mock.roms[self.rid]
+        rom = self.mock.roms[rid or self.rid]
         lay = library.Layout(self.settings.get("library.root"), "esde", {})
         f = rom["files"][0]
         dest = lay.destination(rom, f)
@@ -217,6 +230,113 @@ class WatcherTests(SvcBase):
         wm.EXIT_SETTLE = 0
         w.tick()
         self.wait_for(lambda: self.mock.saves_of(self.rid), what="the push after exit")
+
+    def test_a_game_started_from_the_emulators_menu_is_found_by_the_disc_it_holds_open(self):
+        w = self.svc.watcher
+        self.start_emulator(None, holds=[self.entry["main_file"]])
+        w.tick()
+        self.assertIsNone(w.session["rom_id"], "one look is not enough: the game list scan opens discs too")
+        w.tick()
+        self.assertEqual((w.session["rom_id"], w.session["found_by"]), (self.rid, "open disc image"))
+        self.assertEqual([n for e, n in self.events if e == "emulator_started"][-1]["name"], "Test Game (USA)")
+        self.play(b"played from the menu" * 40)
+        w.session["started"] -= 180
+        self.stop_emulator()
+        import rommarmada.watcher as wm
+        wm.EXIT_SETTLE = 0
+        w.tick()
+        self.wait_for(lambda: self.mock.saves_of(self.rid, "autosave"), what="the push after exit")
+        w.tick()
+        self.wait_for(lambda: self.mock.play_sessions, what="the play time")
+        self.assertEqual(self.mock.play_sessions[0]["rom_id"], self.rid)
+        self.assertGreaterEqual(self.mock.play_sessions[0]["duration_ms"], 180_000)
+
+    def test_a_disc_opened_for_a_moment_is_not_taken_for_the_game(self):
+        w = self.svc.watcher
+        self.start_emulator(None, holds=[self.entry["main_file"]])
+        w.tick()
+        self.hold()                                                   # the scan closed it again
+        w.tick()
+        self.hold(self.entry["main_file"])
+        w.tick()
+        self.assertIsNone(w.session["rom_id"])
+        w.tick()                                                      # held on two looks in a row now
+        self.assertEqual(w.session["rom_id"], self.rid)
+
+    def test_two_discs_held_at_once_are_not_guessed_between(self):
+        rid2 = self.mock.add_rom(self.pid, "Other Game", [("Other Game.iso", fixtures.make_ps2_iso("SLES-50000"))], title_id="SLES-50000")
+        other = self.install_ps2_game_again(rid2)
+        w = self.svc.watcher
+        self.start_emulator(None, holds=[self.entry["main_file"], other["main_file"]])
+        for _ in range(4):
+            w.tick()
+        self.assertIsNone(w.session["rom_id"])
+        self.hold(other["main_file"])
+        w.tick()
+        w.tick()
+        self.assertEqual(w.session["rom_id"], rid2)
+
+    def test_a_file_that_is_not_an_installed_game_is_not_a_game(self):
+        stranger = self.home / "Elsewhere" / "Not Ours.iso"
+        fixtures.write(str(stranger), b"x" * 100)
+        w = self.svc.watcher
+        self.start_emulator(None, holds=[stranger, self.home / ".config" / "ARMSX2" / "bios" / "x.bin"])
+        for _ in range(3):
+            w.tick()
+        self.assertIsNone(w.session["rom_id"])
+
+    def test_after_a_game_found_by_its_disc_the_other_games_are_checked_too_but_this_one_first(self):
+        rid2 = self.mock.add_rom(self.pid, "Other Game", [("Other Game.iso", fixtures.make_ps2_iso("SLES-50000"))], title_id="SLES-50000")
+        self.install_ps2_game_again(rid2)
+        w = self.svc.watcher
+        pushed = []
+        w._spawn = lambda fn, ids: pushed.append(list(ids))
+        # by the command line: only that game
+        self.start_emulator(self.entry["main_file"])
+        w.tick()
+        self.stop_emulator()
+        w.tick()
+        self.assertEqual(pushed.pop(), [self.rid])
+        # by the disc it holds: all of them, with the one it held first
+        other = self.svc.manifest.get(rid2)
+        self.start_emulator(None, holds=[other["main_file"]])
+        w.tick()
+        w.tick()
+        self.stop_emulator()
+        w.tick()
+        ids = pushed.pop()
+        self.assertEqual(ids[0], rid2)
+        self.assertEqual(sorted(ids), sorted([self.rid, rid2]))
+
+    def test_a_game_the_emulator_is_playing_cannot_be_uninstalled(self):
+        self.start_emulator(None, holds=[self.entry["main_file"]])         # started from its menu: the disc is open
+        r = self.svc.uninstall(self.rid)
+        self.assertEqual((r["ok"], r["message"]), (False, "The game is running"))
+        self.assertTrue(Path(self.entry["main_file"]).exists())
+        self.start_emulator(self.entry["main_file"], holds=[])             # or on its command line
+        self.assertFalse(self.svc.uninstall(self.rid)["ok"])
+        self.stop_emulator()
+        self.assertTrue(self.svc.uninstall(self.rid)["ok"])
+        self.assertFalse(Path(self.entry["main_file"]).exists())
+
+    def test_an_emulator_that_stays_unrecognised_is_described_once_in_the_log(self):
+        import rommarmada.watcher as wm
+        lines = []
+        real = wm.log.info
+        wm.log.info = lambda msg, *a: lines.append(msg % a if a else msg)
+        try:
+            w = self.svc.watcher
+            self.start_emulator(None, holds=[self.home / "Elsewhere" / "Mystery.iso", "/usr/lib/libx.so"])
+            w.tick()
+            w.session["started"] -= 60
+            for _ in range(3):
+                w.tick()
+        finally:
+            wm.log.info = real
+        said = [l for l in lines if l.startswith("no installed game recognised")]
+        self.assertEqual(len(said), 1, lines)
+        self.assertIn("Mystery.iso", said[0])
+        self.assertNotIn("libx.so", said[0], "system libraries are not interesting")
 
     def test_push_on_exit_can_be_turned_off(self):
         self.settings.update({"saves": {"push_on_exit": False}})
@@ -332,8 +452,9 @@ class RpcTests(SvcBase):
         asyncio.run(go())
 
     def test_the_panel_can_look_at_and_install_bios_files(self):
-        data = (b"\x42" * 1024) * 4096                  # 4 MiB, the size of a PS2 BIOS
-        fid = self.mock.add_firmware(self.pid, "scph70012.bin", data)
+        data = bytearray((b"\x42" * 1024) * 4096)       # 4 MiB, the size of a PS2 BIOS
+        data[10048:10064] = b"RESET" + b"\0" * 11        # and the ROM directory entry the emulator looks for
+        fid = self.mock.add_firmware(self.pid, "scph70012.bin", bytes(data))
 
         async def go():
             p = self.main.Plugin()

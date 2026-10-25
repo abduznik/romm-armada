@@ -13,7 +13,7 @@ const STATE_TEXT: Record<BiosItem["state"], string> = {
   different: "a different file has this name",
 };
 
-const KIND_TEXT: Record<string, string> = { bios: "", extra: " (goes with a BIOS)", other: " (not a BIOS image)" };
+const KIND_TEXT: Record<string, string> = { bios: "", extra: " (goes with a BIOS)" };
 
 /** BIOS files: what the emulator's folder holds, and what RomM keeps for the platform. Nothing is placed unless asked. */
 export function BiosScreen({ nav }: { nav: Nav }) {
@@ -79,7 +79,7 @@ export function BiosScreen({ nav }: { nav: Nav }) {
             ) : null}
             {st.local.length === 0 ? (
               <PanelSectionRow>
-                <Muted>No files in it.</Muted>
+                <Muted>No BIOS files in it.</Muted>
               </PanelSectionRow>
             ) : (
               st.local.map((f) => (
@@ -89,6 +89,11 @@ export function BiosScreen({ nav }: { nav: Nav }) {
                 </Info>
               ))
             )}
+            {st.others > 0 ? (
+              <PanelSectionRow>
+                <Muted>{`${st.others} other ${st.others === 1 ? "file" : "files"} in this folder ${st.others === 1 ? "is" : "are"} not BIOS files and ${st.others === 1 ? "is" : "are"} left alone.`}</Muted>
+              </PanelSectionRow>
+            ) : null}
             {!st.has_bios ? <Note kind="warn">{st.emulator.name} cannot start a game without a BIOS image.</Note> : null}
             {st.emulator.running ? <Note>{st.emulator.name} is running. Files can be added now, not replaced.</Note> : null}
           </PanelSection>

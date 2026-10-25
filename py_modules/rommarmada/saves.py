@@ -37,6 +37,9 @@ HISTORY_LIMIT = 20
 
 # --- result helpers ---------------------------------------------------------------------------------
 
+QUIET_STATUSES = ("up_to_date", "no_saves", "paused", "disabled", "not_installed")
+
+
 def result(rom_id: int, name: str, status: str, message: str, **extra: Any) -> dict:
     return {"rom_id": rom_id, "name": name, "status": status, "message": message, **extra}
 
@@ -349,7 +352,11 @@ class SaveSync:
         """Brings each game's save in line with RomM. `resolutions` answers pending conflicts: rom id ->
         'server' | 'device' | 'keep_both'."""
         with self._lock:
-            return self._sync(rom_ids, trigger, resolutions or {}, only_if_changed)
+            out = self._sync(rom_ids, trigger, resolutions or {}, only_if_changed)
+        for r in out:    # the log is what is read when a save did not arrive: say what each sync did and why
+            say = log.debug if r.get("status") in QUIET_STATUSES and trigger != "manual" else log.info
+            say("save sync (%s) %s: %s. %s", trigger, r.get("name") or r.get("rom_id"), r.get("status"), r.get("message", ""))
+        return out
 
     def _sync(self, rom_ids: list[int], trigger: str, resolutions: dict[int, str], only_if_changed: bool) -> list[dict]:
         s = self.settings
