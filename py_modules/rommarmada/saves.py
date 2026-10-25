@@ -243,6 +243,10 @@ class SaveSync:
 
     def prepare_cards(self, r: emulators.Resolved, serial: str | None) -> tuple[emulators.CardConfig, dict]:
         """Makes sure the memory card is the kind the settings ask for. Returns the card config and a note."""
+        with self._lock:        # a sync, the setup at start and the one after the emulator closes must not both swap the card
+            return self._prepare_cards(r, serial)
+
+    def _prepare_cards(self, r: emulators.Resolved, serial: str | None) -> tuple[emulators.CardConfig, dict]:
         policy = self.settings.get("saves.card_type")
         cfg = emulators.card_config(r.data_dir, serial)
         s1 = cfg.slots[0]
@@ -351,16 +355,16 @@ class SaveSync:
         return units
 
     def _format(self, ctx: Ctx) -> str:
-        """folders (a zip of the game's save folders) or card (sigil's per-game memory card image) for this device and server."""
+        """folders (a zip of the game's save folders) or card (sigil's per-game memory card image) for this device and server.
+        Save folders are the default; automatic follows the server, and a file memory card can only be read as a card image."""
         wanted = self.settings.get("saves.format")
         if wanted == "card":
             return "card"
-        has_folder_card = any(sl.enabled and sl.kind == "folder" for sl in ctx.cfg.slots)
+        if not any(sl.enabled and sl.kind == "folder" for sl in ctx.cfg.slots):
+            return "card"          # a file card can only be read as a card image
         if wanted == "folders":
             return "folders"
-        if not has_folder_card:
-            return "card"          # a file card can only be read as a card image
-        return "card" if self._server_units() else "folders"
+        return "card" if self._server_units() else "folders"       # automatic: as Argosy, by what the server keeps
 
     # -- the pieces -------------------------------------------------------------------------------------------
 

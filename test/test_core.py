@@ -18,6 +18,7 @@ class SettingsTests(Env):
         s = self.settings
         self.assertEqual(s.get("saves.card_type"), "folder")          # folder cards are the default
         self.assertEqual(s.get("saves.slot"), "armadaos")
+        self.assertEqual(s.get("saves.format"), "folders")            # saves go to RomM as the game's save folders
         self.assertEqual(s.get("library.folder_style"), "esde")
         s.update({"saves": {"slot": "mine"}, "library": {"max_concurrent": 2}})
         from rommarmada.config import Settings

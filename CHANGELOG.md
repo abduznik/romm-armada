@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2
+
+- "Show more": the row you pressed stays where it was and the next games load below it, so the selection is where you
+  were reading and Down goes on into the new games (0.3.1 kept the focus on a button that moved to the end of the list).
+  The row becomes a marker ("Games 31–60") and a new "Show more" closes the list.
+- **Save folders are the default format** (0.3.0 saved "Automatic", which followed the server). A `.ps2` that is already
+  on RomM is still read: only this game's saves are taken out of it, whole shared cards included, and it is left on RomM.
+  A device whose memory card is a file still uses the card image, because a file card cannot give folders.
+- **Memory card slot 1 is made a folder card before a game is played**: when the plugin starts, after pairing, after
+  the handheld wakes and after the emulator closes, not only when a game is installed. An empty file card from the
+  emulator's first start is replaced (and kept aside), a card with saves is never touched.
+
 ## 0.3.1
 
 - Fixed: after pressing "Show more" in the games list the Quick Access Menu stopped answering the controller, and

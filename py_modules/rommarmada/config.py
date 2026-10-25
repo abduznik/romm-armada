@@ -17,7 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 from . import paths
 from .util import read_json, write_json
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # What this plugin's saves are called on RomM: the slot they go to (as Freegosy's go to `freegosy`) and the emulator tag.
 # Saves from any other slot are still pulled; this only names what this device writes.
@@ -159,7 +159,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], Any], bool]] = {
 
     "saves.enabled": (True, _bool, False),
     "saves.slot": (DEFAULT_SLOT, _text(64, allow_empty=False), False),
-    "saves.format": ("auto", _choice("auto", "folders", "card"), False),
+    "saves.format": ("folders", _choice("auto", "folders", "card"), False),
     "saves.push_on_exit": (True, _bool, False),
     "saves.pull_on_startup": (True, _bool, False),
     "saves.pull_when_idle": (True, _bool, False),
@@ -230,8 +230,12 @@ class Settings:
                     except SettingsError:
                         pass  # keep the default for a value that no longer validates
                 version = raw.get("version")
-                if (not isinstance(version, int) or version < 2) and self._values["saves.slot"] == OLD_DEFAULT_SLOT:
+                version = version if isinstance(version, int) else 1
+                if version < 2 and self._values["saves.slot"] == OLD_DEFAULT_SLOT:
                     self._values["saves.slot"] = DEFAULT_SLOT      # the old default, never chosen: use the new name
+                    migrated = True
+                if version < 3 and self._values["saves.format"] == "auto":
+                    self._values["saves.format"] = "folders"       # 0.3.0 saved "automatic" as its default; folders are the default now
                     migrated = True
             if not self._values["auth.device_name"]:
                 self._values["auth.device_name"] = default_device_name()

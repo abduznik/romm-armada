@@ -1,5 +1,5 @@
 import { ButtonItem, PanelSection, PanelSectionRow, TextField } from "@decky/ui";
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { bytes, join, percent } from "../format";
 import { downloads, useStore } from "../store";
@@ -66,6 +66,7 @@ function statusOf(r: RomSummary, job: DownloadJob | undefined): string {
 export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: number | null; title: string }) {
   const installedOnly = title === "Installed";
   const [items, setItems] = useState<RomSummary[]>([]);
+  const [marks, setMarks] = useState<number[]>([]);       // where each page added by "Show more" starts
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -74,6 +75,7 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
   const dls = useStore(downloads);
   const seq = useRef(0);
   const itemsRef = useRef<RomSummary[]>([]);
+  const marksRef = useRef<number[]>([]);
   const once = useSingleFlight();
   const memory = `${platformId ?? "all"}|${title}|${query}`;
 
@@ -90,10 +92,15 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
       const r = installedOnly ? await api.installed(query, offset, limit) : await api.roms(platformId, query, offset, limit);
       if (mine !== seq.current) return;
       if (!r.ok) return setNote(r.message);
-      const next = offset === 0 ? r.items : [...itemsRef.current, ...r.items];
+      const have = new Set(offset === 0 ? [] : itemsRef.current.map((x) => x.id));
+      const fresh = r.items.filter((x) => !have.has(x.id));       // a list that moved on the server between pages repeats a game
+      const next = offset === 0 ? fresh : [...itemsRef.current, ...fresh];
+      const nextMarks = offset === 0 ? [] : fresh.length ? [...marksRef.current, itemsRef.current.length] : marksRef.current;
       itemsRef.current = next;
+      marksRef.current = nextMarks;
       shown.set(memory, next.length);
       setItems(next);
+      setMarks(nextMarks);
       setTotal(r.total);
       setNote(r.stale ? r.message ?? "RomM cannot be reached. Showing installed games only." : "");
     } finally {
@@ -106,6 +113,44 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, platformId]);
 
+  // One keyed list for the games and the rows between pages. "Show more" is the row at the end; when its page arrives the same row
+  // (same key, so the same element, still holding the controller focus) stays where it was, now above the new games, and a new one
+  // closes the list. Pressing Down then simply goes on into the games that were just loaded.
+  const rows: ReactNode[] = [];
+  items.forEach((r, i) => {
+    if (marks.includes(i)) {
+      const end = marks.find((m) => m > i) ?? items.length;
+      rows.push(
+        <PanelSectionRow key={`more-${i}`}>
+          <ButtonItem layout="below" description={`${end - i} more`}>
+            {`Games ${i + 1}–${end}`}
+          </ButtonItem>
+        </PanelSectionRow>,
+      );
+    }
+    rows.push(
+      <PanelSectionRow key={`game-${r.id}`}>
+        <ButtonItem
+          layout="below"
+          onClick={() => nav.push({ name: "game", id: r.id })}
+          description={join([bytes(r.size), r.regions.join(", "), statusOf(r, dls[r.id])])}
+        >
+          {r.installed ? "● " : ""}
+          {r.name}
+        </ButtonItem>
+      </PanelSectionRow>,
+    );
+  });
+  if (items.length > 0 && total > PAGE) {
+    rows.push(
+      <PanelSectionRow key={`more-${items.length}`}>
+        <ButtonItem layout="below" onClick={() => void once(async () => (items.length < total ? load(items.length) : undefined))}>
+          {busy ? "Loading…" : items.length < total ? `Show more (${items.length} of ${total})` : `All ${total} games are shown`}
+        </ButtonItem>
+      </PanelSectionRow>,
+    );
+  }
+
   return (
     <>
       <BackBar nav={nav} title={title} />
@@ -114,30 +159,10 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
           <TextField label="Search" value={search} onChange={(e: { target: { value: string } }) => setSearch(e.target.value)} />
         </PanelSectionRow>
         {note ? <Note kind="warn">{note}</Note> : null}
-        {items.map((r) => (
-          <PanelSectionRow key={r.id}>
-            <ButtonItem
-              layout="below"
-              onClick={() => nav.push({ name: "game", id: r.id })}
-              description={join([bytes(r.size), r.regions.join(", "), statusOf(r, dls[r.id])])}
-            >
-              {r.installed ? "● " : ""}
-              {r.name}
-            </ButtonItem>
-          </PanelSectionRow>
-        ))}
+        {rows}
         {!busy && items.length === 0 ? (
           <PanelSectionRow>
             <Muted>{query ? "Nothing matches." : "Nothing here yet."}</Muted>
-          </PanelSectionRow>
-        ) : null}
-        {items.length > 0 && total > PAGE ? (
-          // One row for the whole life of a long list: it is never disabled and never removed, so the controller focus that
-          // pressed it is still on it when the next page arrives, and on the last page it only says the list is complete.
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => void once(async () => (items.length < total ? load(items.length) : undefined))}>
-              {busy ? "Loading…" : items.length < total ? `Show more (${items.length} of ${total})` : `All ${total} games are shown`}
-            </ButtonItem>
           </PanelSectionRow>
         ) : null}
         {busy && items.length === 0 ? (

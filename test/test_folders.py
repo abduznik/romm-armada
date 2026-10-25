@@ -402,7 +402,8 @@ class PullTests(FolderSync):
 
 
 class FormatTests(FolderSync):
-    def test_the_server_decides_like_argosy_does(self):
+    def test_automatic_lets_the_server_decide_like_argosy_does(self):
+        self.a.settings.update({"saves": {"format": "auto"}})
         self.a.play(b"hello" * 100)
         self.assertEqual(self.sync(self.a)["status"], "uploaded")
         self.assertTrue(zipfile.is_zipfile(io.BytesIO(self.server_saves()[0]["data"])), "RomM 5.0 has no SAVE_SYNC: save folders")
@@ -475,7 +476,7 @@ class FormatTests(FolderSync):
         self.assertTrue(self.b.card().is_file(), "the file card the user chose is still a file card")
         self.assertEqual(self.record(self.b).last["format"], "card")
 
-    def test_forcing_save_folders_on_a_file_card_says_why_it_cannot(self):
+    def test_a_file_card_cannot_give_save_folders_so_it_falls_back_to_the_card_image(self):
         with self.b.active():
             sb = self.savebridge()
             unit = fixtures.write(str(self.tmp / "u.zip"), fixtures.make_save_zip("BASLUS-20152"))
@@ -485,8 +486,9 @@ class FormatTests(FolderSync):
                        identity={"platform": "ps2", "title_id": "SLUS-20152", "save_id": "BASLUS-20152"})
         self.b.settings.update({"saves": {"card_type": "auto", "format": "folders"}})
         r = self.sync(self.b)
-        self.assertEqual(r["status"], "error", r)
-        self.assertIn("folder memory card", r["message"])
+        self.assertEqual(r["status"], "uploaded", r)
+        self.assertEqual(len(self.server_saves()[0]["data"]), 8650752, "the file card's save goes up as a card image")
+        self.assertEqual(self.record(self.b).last["format"], "card")
 
 
 class AnySlotTests(FolderSync):
@@ -714,6 +716,25 @@ class AnySlotTests(FolderSync):
 
 
 class MigrationTests(Env):
+    def test_the_automatic_format_0_3_0_saved_as_its_default_becomes_save_folders(self):
+        from rommarmada import config
+        path = Path(os.environ["ROMM_ARMADA_HOME"]) / "settings" / "settings.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 2, "saves": {"slot": "armadaos", "format": "auto"}}))
+        s = config.Settings()
+        s.load()
+        self.assertEqual(s.get("saves.format"), "folders")
+        self.assertEqual(json.loads(path.read_text())["version"], 3)
+        # a choice made on version 3 is kept
+        s.update({"saves": {"format": "auto"}})
+        again = config.Settings()
+        again.load()
+        self.assertEqual(again.get("saves.format"), "auto")
+        path.write_text(json.dumps({"version": 2, "saves": {"format": "card"}}))
+        s = config.Settings()
+        s.load()
+        self.assertEqual(s.get("saves.format"), "card", "a card image chosen on purpose stays")
+
     def test_the_old_default_slot_moves_to_the_new_name_and_a_chosen_one_stays(self):
         from rommarmada import config
         path = Path(os.environ["ROMM_ARMADA_HOME"]) / "settings" / "settings.json"
@@ -723,7 +744,7 @@ class MigrationTests(Env):
         s.load()
         self.assertEqual(s.get("saves.slot"), "armadaos")
         self.assertFalse(s.get("saves.push_on_exit"), "the rest is kept")
-        self.assertEqual(json.loads(path.read_text())["version"], 2)
+        self.assertEqual(json.loads(path.read_text())["version"], 3)
         again = config.Settings()
         again.load()
         self.assertEqual(again.get("saves.slot"), "armadaos")

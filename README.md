@@ -19,7 +19,7 @@ The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Arm
 
 ## Install
 
-1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.3.1.zip`.
+1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.3.2.zip`.
 2. Open the plugin from Decky's Quick Access menu.
 
 ## Connect
@@ -57,15 +57,17 @@ A save older than one already taken is never restored over it, and a save state 
 
 ### What a save looks like on RomM
 
-- **Save folders (zip)**: a zip with the game's save folders at its root (`BASLUS-21269BULLY000/…`): a few hundred KB,
-  never the other games on the card. This is what Argosy and Freegosy upload to a RomM before 5.5, and it is the default
-  for such a server. RomM hashes a zip by its entries, so the same save is the same save however it was zipped.
+- **Save folders (zip)**, the default: a zip with the game's save folders at its root (`BASLUS-21269BULLY000/…`): a few
+  hundred KB, never the other games on the card. This is what Argosy and Freegosy upload to a RomM before 5.5. RomM hashes
+  a zip by its entries, so the same save is the same save however it was zipped.
 - **Card image**: sigil's per-game 8.3 MB `.ps2`, which Argosy uses on RomM 5.5 and newer (the server says so in its
-  heartbeat). Used for such a server, for a file memory card, or when the setting asks for it.
-- *Settings → Saves → Save format on RomM*: Automatic (follows the server), Save folders, or Card image. A server that
-  changes format gets the same save once more in the new one.
+  heartbeat). Used when the setting asks for it, or when the card here is a file (a file card cannot give folders).
+- *Settings → Saves → Save format on RomM*: Save folders (default), Automatic (follows the server, as Argosy), or Card
+  image. A change gets the same save uploaded once more in the new format.
 
-What it can **restore** is wider: both of the above, Freegosy's bundles (its `freegosy_sync.txt` is ignored), a whole folder
+A `.ps2` already on RomM is read, not skipped: the plugin looks inside the card (whole shared cards too), takes only
+this game's save folders out of it and puts them on the folder card, and the other games' saves on it are ignored. The
+`.ps2` on RomM is left as it is; from then on this device uploads folders. What it can **restore** is wider: both of the above, Freegosy's bundles (its `freegosy_sync.txt` is ignored), a whole folder
 card in a zip (only this game's folders are taken), a memory card image inside a zip, and a whole shared `.ps2` file
 card (only this game's saves are taken). A restore replaces the game's own save folders and nothing else on the card,
 and puts everything back if it fails half way. A save that cannot be read is skipped once, with the reason, and not
@@ -78,6 +80,9 @@ mode Argosy uses on Android. A restore writes only that game's save folders; oth
 Each upload is a new version in the slot; *Keep only recent versions on RomM* with *Versions on RomM* (default 10) bounds
 how many stay.
 
+- ARMSX2 has no setting for the kind of a card: it takes a directory at the card's path for a folder card. So the plugin
+  makes slot 1 a folder card **before a game is ever played**: when it starts, after pairing, after the handheld wakes
+  and after the emulator closes (not only when a game is installed), as long as the emulator is installed or has run.
 - No card yet → the plugin creates a formatted folder card.
 - A file card with no saves → replaced by a folder card (the old file is kept beside it as `.bak`).
 - A file card **with** saves is never touched: convert it in the emulator (Settings → Memory Cards → Convert), or set
@@ -149,7 +154,7 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
   permission). These runs also caught that RomM merges devices with the same hostname, so each install now registers
   under its own, and that 5.0.0 starts scans only over its websocket (the test harness runs the scan inside the container).
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 211 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every
+- 220 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every
   archive shape, BIOS install, the watcher, remote installs, the Decky RPC layer under a stand-in for Decky's module) and
   24 rendered panel scenarios (typed pairing code, device
   approval, browsing, downloading, conflicts, BIOS files, settings, disconnecting). The panel also type-checks against

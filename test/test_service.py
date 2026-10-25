@@ -396,6 +396,85 @@ class WatcherTests(SvcBase):
         self.assertEqual(self.mock.install_requests[0]["status"], "already_installed")
 
 
+class CardSetupTests(SvcBase):
+    """Memory card slot 1 becomes a folder card before a game is played, without waiting for a game to be installed."""
+
+    def exe(self):
+        p = self.home / "Applications" / "ARMSX2.AppImage"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"not really an emulator")
+
+    @property
+    def card(self):
+        return self.home / ".config" / "ARMSX2" / "memcards" / "Mcd001.ps2"
+
+    def test_a_fresh_install_gets_a_folder_card_before_the_emulator_ever_runs(self):
+        self.exe()
+        self.svc.setup_cards("test")
+        self.assertTrue(self.card.is_dir())
+        self.assertTrue((self.card / "_pcsx2_superblock").is_file(), "formatted, so the emulator opens it as it is")
+
+    def test_nothing_is_made_for_an_emulator_that_is_not_there(self):
+        self.svc.setup_cards("test")
+        self.assertFalse((self.home / ".config" / "ARMSX2").exists())
+
+    def test_an_empty_file_card_from_the_emulators_first_start_is_replaced_and_kept_aside(self):
+        self.exe()
+        self.card.parent.mkdir(parents=True)
+        self.card.write_bytes(b"\xff" * 8650752)
+        self.svc.setup_cards("test")
+        self.assertTrue(self.card.is_dir())
+        self.assertTrue(any(p.name.startswith("Mcd001.ps2.empty-") for p in self.card.parent.iterdir()))
+
+    def test_a_card_with_saves_is_never_touched(self):
+        self.exe()
+        sb = self.savebridge()
+        root = str(self.home / ".config" / "ARMSX2")
+        os.makedirs(root, exist_ok=True)
+        unit = fixtures.write(str(self.tmp / "u.zip"), fixtures.make_save_zip("BASLUS-20152"))
+        sb.restore(layout="pcsx2_standalone", root=root, unit=Path(unit), rom=None, platform_slug="ps2", content="/x/T.iso",
+                   identity={"platform": "ps2", "title_id": "SLUS-20152", "save_id": "BASLUS-20152"})
+        before = self.card.read_bytes()
+        self.assertTrue(self.card.is_file())
+        self.svc.setup_cards("test")
+        self.assertTrue(self.card.is_file())
+        self.assertEqual(self.card.read_bytes(), before)
+
+    def test_not_while_the_emulator_runs(self):
+        self.exe()
+        self.start_emulator(None)
+        self.svc.setup_cards("test")
+        self.assertFalse(self.card.exists())
+
+    def test_the_settings_can_turn_it_off(self):
+        self.exe()
+        self.settings.update({"saves": {"card_type": "auto"}})
+        self.svc.setup_cards("test")
+        self.assertFalse(self.card.exists(), "'use what the emulator has' means leave the cards alone")
+        self.settings.update({"saves": {"card_type": "folder", "enabled": False}})
+        self.svc.setup_cards("test")
+        self.assertFalse(self.card.exists())
+
+    def test_it_happens_when_the_plugin_starts_and_when_the_device_is_paired(self):
+        self.exe()
+        self.svc.start()
+        self.wait_for(self.card.is_dir, what="the card made at start")
+        shutil.rmtree(self.card)
+        self.svc.after_connect()
+        self.wait_for(self.card.is_dir, what="the card made after pairing")
+
+    def test_after_the_emulator_closes_the_empty_card_its_first_start_made_is_replaced(self):
+        self.exe()
+        w = self.svc.watcher
+        self.start_emulator(None)
+        w.tick()
+        self.card.parent.mkdir(parents=True)
+        self.card.write_bytes(b"\xff" * 8650752)             # what the first start leaves behind
+        self.stop_emulator()
+        w.tick()
+        self.wait_for(self.card.is_dir, what="the card replaced after the emulator closed")
+
+
 class RpcTests(SvcBase):
     """main.py under a stand-in for Decky's module."""
 

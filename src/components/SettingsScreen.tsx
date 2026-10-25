@@ -186,10 +186,10 @@ function SavesSettings({ nav }: { nav: Nav }) {
           st={st}
           path="saves.format"
           label="Save format on RomM"
-          description="Automatic follows the server like Argosy does: a zip of the game's save folders, or the card image on RomM 5.5 and newer"
+          description="Save folders: a zip of the game's own folders, as Freegosy and Argosy keep them. A saved .ps2 on RomM is still read and only the game's part is taken"
           options={[
-            { value: "auto", label: "Automatic" },
             { value: "folders", label: "Save folders (zip)" },
+            { value: "auto", label: "Automatic (card image on RomM 5.5 and newer)" },
             { value: "card", label: "Card image (.ps2)" },
           ]}
         />

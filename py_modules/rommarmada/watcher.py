@@ -89,6 +89,8 @@ class Watcher:
         self._last_wall = now_wall
         self._watch_emulator()
         s = self.svc.settings
+        if slept:
+            self._spawn(self.svc.setup_cards, "wake")
         if not s.signed_in:
             return
         if slept and s.get("saves.pull_when_idle"):
@@ -153,6 +155,7 @@ class Watcher:
         seconds = int(time.time() - session["started"])
         log.info("emulator closed after %ss: %s", seconds, session.get("name") or "unknown game")
         self.svc.emit("emulator_stopped", {"rom_id": session["rom_id"], "name": session["name"], "seconds": seconds})
+        self._spawn(self.svc.setup_cards, "exit")        # a first start leaves empty file cards behind; make them folder cards now
         s = self.svc.settings
         if session["rom_id"] and s.get("saves.playtime") and seconds >= MIN_PLAY_SECONDS:
             self._queue_playtime(session, seconds)

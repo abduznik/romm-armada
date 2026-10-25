@@ -59,6 +59,7 @@ class Service:
         self.downloads.start()
         self.watcher.start()
         log.info("RomM Armada %s started", PLUGIN_VERSION)
+        threading.Thread(target=self.setup_cards, args=("start",), name="romm-cards", daemon=True).start()
 
     def stop(self) -> None:
         self.watcher.stop()
@@ -372,6 +373,26 @@ class Service:
         ids = [g["rom_id"] for g in self.manifest.all() if emulators.group_for_platform(g.get("platform_slug", ""))]
         return self.saves.sync(ids, trigger="manual") if ids else []
 
+    def setup_cards(self, why: str = "") -> None:
+        """Makes memory card slot 1 a folder card before a game is ever played, so the saves are folder saves from the first one.
+
+        There is no setting for it to change: the emulator takes a card for a folder card when what is at its path is a
+        directory, so the card is created there, or an empty file card the emulator made on its first start is replaced.
+        Quiet, and only when the emulator is installed or has run; never while it runs, never for a card that holds saves."""
+        s = self.settings
+        if not s.get("saves.enabled") or s.get("saves.card_type") != "folder":
+            return
+        try:
+            r = emulators.resolve_ps2(s.get("emulators.ps2.emulator"), s.get("emulators.ps2.data_dir"), s.get("emulators.ps2.executable"))
+            if not (r.data_dir_exists or r.executable) or self._ps2_running():
+                return
+            _, note = self.saves.prepare_cards(r, None)
+        except (SavebridgeError, SigilRefusal, OSError) as e:
+            log.debug("memory card not set up (%s): %s", why, e)
+            return
+        if note.get("state") == "blocked":
+            log.info("memory card left as it is (%s): %s", why, note.get("message"))
+
     def prepare_cards(self) -> dict:
         """Settings > Saves > 'Set up the memory card': makes the card the kind the setting asks for."""
         s = self.settings
@@ -534,6 +555,7 @@ class Service:
         self._client = None
         self._lists.clear()
         self.watcher.poke()
+        threading.Thread(target=self.setup_cards, args=("connect",), name="romm-cards", daemon=True).start()
 
     # -- diagnostics ---------------------------------------------------------------------------------------------------
 

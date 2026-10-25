@@ -13,7 +13,7 @@ const settingsDoc = () => ({
   auth: { device_id: "d1", device_name: "Armada", username: "admin", method: "pairing", signed_in: true },
   library: { root: "/home/armada/ROMs", folder_style: "esde", platform_dirs: {}, include_extras: true, verify: "crc", max_concurrent: 1,
     speed_limit_kbs: 0, min_free_mb: 512, extract_zip: false, resume_on_start: true, remote_installs: false },
-  saves: { enabled: true, slot: "armadaos", format: "auto", push_on_exit: true, pull_on_startup: true, pull_when_idle: true, pull_interval_min: 30,
+  saves: { enabled: true, slot: "armadaos", format: "folders", push_on_exit: true, pull_on_startup: true, pull_when_idle: true, pull_interval_min: 30,
     conflict: "ask", card_type: "folder", backups: true, backup_keep: 5, autocleanup: true, autocleanup_limit: 10, playtime: true, notify: true },
   emulators: { ps2: { emulator: "auto", data_dir: "", executable: "" } },
   advanced: { request_timeout: 30, debug: false },
@@ -517,6 +517,7 @@ describe("the panel", () => {
     assert.match(text(h), /Game 029/);
     assert.doesNotMatch(text(h), /Game 030/);
     assert.equal(findButton(h, "Show more (30 of 70)").disabled, false);
+    const pressed = findButton(h, "Show more (30 of 70)");            // the element the controller focus is on
     await click(h, "Show more (30 of 70)");
     const loading = findButton(h, "Loading…");
     assert.equal(loading.disabled, false, "the button that was pressed is still there to hold the focus while the page loads");
@@ -525,10 +526,18 @@ describe("the panel", () => {
     release();
     await settle(4);
     assert.match(text(h), /Game 059/);
+    // the pressed row did not move in the list and was not replaced: it is now between the games that were shown and the new ones,
+    // so the focus is where the reader was and Down goes on into the new games
+    const kept = findButton(h, "Games 31–60");
+    assert.equal(kept, pressed, "the very element that held the focus is still there");
+    const FOLLOWING = 4;
+    assert.ok(findButton(h, "Game 029").compareDocumentPosition(kept) & FOLLOWING, "right after the last game shown before");
+    assert.ok(kept.compareDocumentPosition(findButton(h, "Game 030")) & FOLLOWING, "and just before the first new game");
     assert.equal(findButton(h, "Show more (60 of 70)").disabled, false);
     await click(h, "Show more (60 of 70)");
     await settle(2);
     assert.match(text(h), /Game 069/);
+    assert.ok(findButton(h, "Games 61–70"), "every page leaves its row where it was pressed");
     const last = findButton(h, "All 70 games are shown");
     assert.equal(last.disabled, false, "the list is complete but the row stays, so the focus is not left without a place");
     const asked = backend.calls.filter((c) => c.method === "roms").length;
@@ -615,10 +624,11 @@ describe("the panel", () => {
     await click(h, "Saves and memory card");
     assert.match(text(h), /Slot on RomM.*armadaos/);
     assert.match(text(h), /The newest save in any slot is still pulled, whoever made it/);
-    assert.match(text(h), /Automatic follows the server like Argosy does/);
-    await choose(h, "Save format on RomM", "folders");
-    assert.deepEqual(backend.calls.filter((c) => c.method === "settings_set").pop()!.args, [{ saves: { format: "folders" } }]);
-    assert.equal(get().saves.format, "folders");
+    assert.match(text(h), /A saved .ps2 on RomM is still read and only the game.s part is taken/);
+    assert.equal((h.el.querySelector('select[aria-label="Save format on RomM"]') as HTMLSelectElement).value, "folders", "save folders are the default");
+    await choose(h, "Save format on RomM", "card");
+    assert.deepEqual(backend.calls.filter((c) => c.method === "settings_set").pop()!.args, [{ saves: { format: "card" } }]);
+    assert.equal(get().saves.format, "card");
     await h.unmount();
   });
 
