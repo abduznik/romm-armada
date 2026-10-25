@@ -63,6 +63,8 @@ if unzip -l "$ZIP" | grep -E '__pycache__|\.pyc|/test/|\.part$'; then
     echo "unwanted files in the zip" >&2
     exit 1
 fi
+unzip -tq "$ZIP" > /dev/null || { echo "the zip does not pass its own integrity test" >&2; exit 1; }
+(cd "$OUT" && sha256sum "$(basename "$ZIP")" > "$(basename "$ZIP").sha256")
 echo "== done"
-sha256sum "$ZIP"
+cat "$ZIP.sha256"
 ls -l "$ZIP"
