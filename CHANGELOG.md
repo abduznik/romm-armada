@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A save that is a whole memory card with none of this game's saves on it now says whose saves it holds ("it has
+  BASLUS-20001TekkenTT, BASCUS-97399GodOfWar …") instead of only that it holds nothing for the game. Found when a Tekken 4
+  entry on RomM turned out to be Freegosy's old upload of a whole PC card with other games' saves and none of Tekken 4's.
+
 ## 0.3.0
 
 Saves now work the way Argosy and Freegosy do on the user's RomM (5.0.0), and a sync takes the latest save from anywhere.

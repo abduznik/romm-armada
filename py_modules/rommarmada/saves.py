@@ -800,7 +800,8 @@ class SaveSync:
     def _pick_image(self, zf: zipfile.ZipFile, images: list, work: Path, save_id: str) -> Path:
         """The memory card image in a zip that holds this game's saves (else the only one), extracted for sigil."""
         work.mkdir(parents=True, exist_ok=True)
-        chosen: Path | None = None
+        readable = False
+        held: list[str] = []
         for n, info in enumerate(images):
             path = work / f"card-{n}.ps2"
             with zf.open(info) as src, open(path, "wb") as dst:
@@ -808,13 +809,16 @@ class SaveSync:
             try:
                 names = [str(e.get("name", "")) for e in self.bridge.card_list(str(path)).get("entries") or []]
             except (SavebridgeError, SigilRefusal):
-                continue
+                continue           # a card nobody formatted (an unused slot) has nothing on it
+            readable = True
             if any(savefolders.folder_matches(nm, save_id) for nm in names):
                 return path
-            chosen = chosen or path
-        if chosen is None:
+            held += names
+        if not readable:
             raise savefolders.ArchiveError("RomM's save holds a memory card this plugin cannot read")
-        raise savefolders.ArchiveError("RomM's save holds nothing for this game")
+        listing = ", ".join(held[:6]) + (" …" if len(held) > 6 else "")
+        raise savefolders.ArchiveError("RomM's save is a whole memory card, and none of its saves is this game's"
+                                       + (f" (it has {listing})" if held else " (it is empty)"))
 
     def _download(self, client: RommClient, p: dict, op: dict | None, device_id: str, session_id: int | None,
                   force_local: bool, save_id: int | None = None) -> dict:

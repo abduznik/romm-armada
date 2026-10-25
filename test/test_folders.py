@@ -657,6 +657,27 @@ class AnySlotTests(FolderSync):
         self.assertEqual(self.sync(self.a)["status"], "up_to_date")
         self.assertEqual(self.server_saves(), [])
 
+    def test_a_whole_card_with_only_other_games_says_which_games(self):
+        """Freegosy before 0.6.0 uploaded the whole PC card (plus an unused second card) as the launched game's save."""
+        with self.b.active():
+            sb = self.savebridge()
+            root = self.tmp / "pc"
+            root.mkdir()
+            for serial, save_id in (("SLUS-20001", "BASLUS-20001TekkenTT"), ("SCUS-97399", "BASCUS-97399GodOfWar")):
+                unit = fixtures.write(str(self.tmp / f"{serial}.zip"), fixtures.make_save_zip(save_id))
+                sb.restore(layout="pcsx2_standalone", root=str(root), unit=Path(unit), rom=None, platform_slug="ps2", content=f"/x/{serial}.iso",
+                           identity={"platform": "ps2", "title_id": serial, "save_id": save_id[:12]})
+        card = (root / "memcards" / "Mcd001.ps2").read_bytes()
+        bad = self.seed_freegosy(zip_of({"Mcd001.ps2": card, "Mcd002.ps2": b"\xff" * len(card)}), age=timedelta(hours=1))
+        r = self.sync(self.a)
+        self.assertEqual(r["status"], "error", r)
+        self.assertIn("whole memory card, and none of its saves is this game's", r["message"])
+        self.assertIn("TekkenTT", r["message"])
+        self.assertIn("GodOfWar", r["message"])
+        self.assertFalse((self.a.card() / "BASLUS-20152").exists())
+        self.assertIn(bad["id"], self.record(self.a).doc["unusable"])
+        self.assertEqual(self.files_on(self.a), {}, "nothing was written")
+
     def test_a_save_that_cannot_be_read_is_skipped_once_and_not_forever_blocking(self):
         bad = self.seed_freegosy(zip_of({"BESLES-99999/icon.sys": b"another game's"}), age=timedelta(hours=1))
         r = self.sync(self.a)
