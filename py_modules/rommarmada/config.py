@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Settings: a flat schema of dotted keys, each with a type, a default and a check.
 
-The UI sends partial updates ({"saves": {"slot": "autosave"}}); every leaf is validated before any
+The UI sends partial updates ({"saves": {"slot": "armadaos"}}); every leaf is validated before any
 of them is applied, so a bad value never half-saves. The token never leaves the backend.
 """
 from __future__ import annotations
@@ -17,7 +17,12 @@ from urllib.parse import urlsplit, urlunsplit
 from . import paths
 from .util import read_json, write_json
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# What this plugin's saves are called on RomM: the slot they go to (as Freegosy's go to `freegosy`) and the emulator tag.
+# Saves from any other slot are still pulled; this only names what this device writes.
+DEFAULT_SLOT = "armadaos"
+OLD_DEFAULT_SLOT = "autosave"           # versions 0.1 and 0.2 wrote this into the settings file
 
 FILE_CATEGORIES_EXTRAS = ("update", "dlc", "patch", "translation", "hack", "mod", "demo", "prototype", "cheat")
 
@@ -153,7 +158,8 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], Any], bool]] = {
     "library.remote_installs": (False, _bool, False),
 
     "saves.enabled": (True, _bool, False),
-    "saves.slot": ("autosave", _text(64, allow_empty=False), False),
+    "saves.slot": (DEFAULT_SLOT, _text(64, allow_empty=False), False),
+    "saves.format": ("auto", _choice("auto", "folders", "card"), False),
     "saves.push_on_exit": (True, _bool, False),
     "saves.pull_on_startup": (True, _bool, False),
     "saves.pull_when_idle": (True, _bool, False),
@@ -211,6 +217,7 @@ class Settings:
     # -- persistence -----------------------------------------------------------------------
 
     def load(self) -> None:
+        migrated = False
         with self._lock:
             raw = read_json(self.path, None)
             if isinstance(raw, dict):
@@ -222,8 +229,14 @@ class Settings:
                         self._values[key] = SCHEMA[key][1](value)
                     except SettingsError:
                         pass  # keep the default for a value that no longer validates
+                version = raw.get("version")
+                if (not isinstance(version, int) or version < 2) and self._values["saves.slot"] == OLD_DEFAULT_SLOT:
+                    self._values["saves.slot"] = DEFAULT_SLOT      # the old default, never chosen: use the new name
+                    migrated = True
             if not self._values["auth.device_name"]:
                 self._values["auth.device_name"] = default_device_name()
+        if migrated:
+            self.save()
 
     def save(self) -> None:
         with self._lock:

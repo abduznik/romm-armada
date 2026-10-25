@@ -197,14 +197,14 @@ class WatcherTests(SvcBase):
         wm.EXIT_SETTLE = 0
         w.tick()
         self.assertIsNone(w.session)
-        self.wait_for(lambda: self.mock.saves_of(self.rid, "autosave"), what="the push after exit")
-        self.assertEqual(len(self.mock.saves_of(self.rid, "autosave")), 1)
+        self.wait_for(lambda: self.mock.saves_of(self.rid, "armadaos"), what="the push after exit")
+        self.assertEqual(len(self.mock.saves_of(self.rid, "armadaos")), 1)
         self.assertIn("emulator_stopped", [e for e, _ in self.events])
         # play time went into the queue and goes to RomM on a later tick
         w.tick()
         self.wait_for(lambda: self.mock.play_sessions, what="the play session")
         ps = self.mock.play_sessions[0]
-        self.assertEqual((ps["rom_id"], ps["save_slot"]), (self.rid, "autosave"))
+        self.assertEqual((ps["rom_id"], ps["save_slot"]), (self.rid, "armadaos"))
         self.assertGreaterEqual(ps["duration_ms"], 120_000)
 
     def test_a_short_session_is_not_reported(self):
@@ -245,7 +245,7 @@ class WatcherTests(SvcBase):
         import rommarmada.watcher as wm
         wm.EXIT_SETTLE = 0
         w.tick()
-        self.wait_for(lambda: self.mock.saves_of(self.rid, "autosave"), what="the push after exit")
+        self.wait_for(lambda: self.mock.saves_of(self.rid, "armadaos"), what="the push after exit")
         w.tick()
         self.wait_for(lambda: self.mock.play_sessions, what="the play time")
         self.assertEqual(self.mock.play_sessions[0]["rom_id"], self.rid)

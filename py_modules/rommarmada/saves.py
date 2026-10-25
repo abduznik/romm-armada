@@ -17,22 +17,38 @@ Rules that keep a card safe:
 from __future__ import annotations
 
 import hashlib
+import io
 import os
+import re
 import shutil
 import threading
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import emulators, log, paths
+from . import emulators, log, paths, savefolders
 from .config import Settings
 from .library import Manifest
 from .romm import RommClient, RommError, describe
 from .sigil import Savebridge, SavebridgeError, SigilRefusal
-from .util import iso, now_utc, read_json, ts_to_iso, write_json
+from .util import iso, now_utc, read_json, safe_segment, ts_to_iso, write_json
 
 HISTORY_LIMIT = 20
+EMULATOR_TAG = "armadaos"        # the `emulator` of every save this plugin uploads (its slot is the `saves.slot` setting)
+CAPS_TTL = 600.0                 # how long the server's answer about save units is trusted
+CAPS_RETRY = 60.0                # and how long a failed look is not repeated
+UNUSABLE_LIMIT = 50
+NO_SLOT = "no slot"              # how a save RomM keeps outside any slot is named on the screen
+STATE_NAME = re.compile(r"\.(state\d*|p2s)(\.|$)", re.IGNORECASE)    # a save state filed as a save: not a memory card save
+
+
+class FolderRefusal(SigilRefusal):
+    """The folder format saying no, in the words sigil uses, so the engine treats both alike."""
+
+    def __init__(self, name: str, message: str = "", problem: str = "") -> None:
+        super().__init__({"error": name, "message": message or name, "problem": problem})
 
 
 # --- result helpers ---------------------------------------------------------------------------------
@@ -210,6 +226,7 @@ class SaveSync:
         self.emit = emit or (lambda event, payload: None)
         self.reregister = reregister
         self._lock = threading.RLock()
+        self._caps: tuple[float, bool, bool] | None = None      # when the server was asked, whether it keeps units, whether it answered
 
     # -- context ----------------------------------------------------------------------------------------
 
@@ -309,8 +326,48 @@ class SaveSync:
 
     # -- the pieces -------------------------------------------------------------------------------------------
 
+    # -- which format -----------------------------------------------------------------------------------------
+
+    def _server_units(self) -> bool:
+        """Whether the server keeps saves as sigil units (RomM 5.5 and newer say so in their heartbeat). Older servers keep
+        what Argosy and Freegosy send: a zip of the game's save folders. The answer is remembered, so a sync made
+        offline decides the same way."""
+        now = time.monotonic()
+        if self._caps and now - self._caps[0] < (CAPS_TTL if self._caps[2] else CAPS_RETRY):
+            return self._caps[1]
+        url = self.settings.get("server.url")
+        known = read_json(paths.state_dir() / "server.json", {})
+        units, answered = False, False
+        try:
+            hb = self.get_client().heartbeat()
+            units = bool(((hb or {}).get("SAVE_SYNC") or {}).get("SNAPSHOTS"))
+            answered = True
+            write_json(paths.state_dir() / "server.json", {"url": url, "units": units, "at": iso(),
+                                                           "version": RommClient.version_of(hb or {})})
+        except RommError:
+            if isinstance(known, dict) and known.get("url") == url:
+                units = bool(known.get("units"))
+        self._caps = (now, units, answered)
+        return units
+
+    def _format(self, ctx: Ctx) -> str:
+        """folders (a zip of the game's save folders) or card (sigil's per-game memory card image) for this device and server."""
+        wanted = self.settings.get("saves.format")
+        if wanted == "card":
+            return "card"
+        has_folder_card = any(sl.enabled and sl.kind == "folder" for sl in ctx.cfg.slots)
+        if wanted == "folders":
+            return "folders"
+        if not has_folder_card:
+            return "card"          # a file card can only be read as a card image
+        return "card" if self._server_units() else "folders"
+
+    # -- the pieces -------------------------------------------------------------------------------------------
+
     def _collect(self, ctx: Ctx, game: dict, rec: Record, work: Path) -> dict:
         ident = self.identity(game)
+        if self._format(ctx) == "folders":
+            return self._collect_folders(ctx, game, ident, rec, work)
         game = {**game, "identity": ident}
         work.mkdir(parents=True, exist_ok=True)
         out = work / "unit.bin"
@@ -323,15 +380,53 @@ class SaveSync:
         got["unit_path"] = str(out) if got.get("has_unit") else ""
         got["state_tmp"] = str(state_out) if got.get("has_state") else ""
         got["mtime"] = local_mtime(ctx.cfg, ident.get("save_id", ""))
+        got["format"] = "card"
+        return got
+
+    @staticmethod
+    def _artifact(game: dict, ext: str) -> str:
+        stem = Path(game.get("main_file") or "").stem or game.get("name") or f"game-{game['rom_id']}"
+        return f"{safe_segment(stem)}.{ext}"
+
+    def _collect_folders(self, ctx: Ctx, game: dict, ident: dict, rec: Record, work: Path) -> dict:
+        """The game's save folders from the folder card(s), zipped. The unit is what Argosy and Freegosy upload."""
+        cards = [sl.path for sl in ctx.cfg.slots if sl.enabled and sl.kind == "folder"]
+        if not cards:
+            raise FolderRefusal("unsupported_format", "Save folders need a folder memory card; slot 1 is not one")
+        save_id = ident.get("save_id") or ident.get("title_id") or ""
+        got = {"ok": True, "format": "folders", "has_unit": False, "unit_path": "", "state_tmp": "", "content_hash": "",
+               "changed": False, "restore_again": False, "artifact": self._artifact(game, "zip"), "mtime": 0.0,
+               "identity_hash": hashlib.md5(save_id.encode()).hexdigest()}
+        folders = savefolders.find_folders(cards, save_id)
+        if not folders:
+            return got
+        work.mkdir(parents=True, exist_ok=True)
+        out = work / "unit.zip"
+        try:
+            built = savefolders.build(folders, out)
+        except savefolders.NoFiles:
+            return got
+        except savefolders.ArchiveError as e:
+            raise FolderRefusal("damaged", str(e)) from None
+        except OSError as e:
+            raise FolderRefusal("io", str(e)) from None
+        got.update(has_unit=True, unit_path=str(out), content_hash=built.content_hash, mtime=built.mtime,
+                   changed=not (rec.last and rec.last.get("local_hash") == built.content_hash))
         return got
 
     def _unit_info(self, path: Path) -> dict:
-        """What a unit is: its size and the game saves inside it. RomM keeps each game's save as a whole 8 MB memory card
-        image (sigil's format, which Argosy and every PCSX2-family emulator reads), and this says what is in that image."""
-        info: dict = {"size": 0, "contents": [], "bytes": 0}
+        """What a unit is, for the screen: its size and the game saves inside it. A zip holds the game's save folders. A card
+        image is sigil's per-game 8 MB memory card (the format RomM 5.5 and newer keep), and this says what is in it."""
+        p = Path(path)
         try:
-            info["size"] = Path(path).stat().st_size
-            listing = self.bridge.card_list(str(path))
+            if zipfile.is_zipfile(p):
+                return savefolders.describe(p)
+        except OSError:
+            pass
+        info: dict = {"kind": "card", "size": 0, "contents": [], "bytes": 0}
+        try:
+            info["size"] = p.stat().st_size
+            listing = self.bridge.card_list(str(p))
             entries = listing.get("entries") or []
             info["contents"] = [str(e.get("name", "")) for e in entries]
             info["bytes"] = sum(int(e.get("blocks", 0)) for e in entries) * 1024      # a card block is a 1 KiB cluster
@@ -342,8 +437,16 @@ class SaveSync:
     def _client_state(self, ctx: Ctx, game: dict, local: dict) -> dict:
         size = Path(local["unit_path"]).stat().st_size if local.get("unit_path") else 0
         return {"rom_id": game["rom_id"], "file_name": local["artifact"], "slot": self.settings.get("saves.slot"),
-                "emulator": ctx.profile.romm_emulator, "content_hash": local["content_hash"],
+                "emulator": EMULATOR_TAG, "content_hash": local["content_hash"],
                 "updated_at": ts_to_iso(local["mtime"] or time.time()), "file_size_bytes": size}
+
+    @staticmethod
+    def _see(rec: Record, stamp: Any) -> None:
+        """Remembers the newest server save this device has taken or made, by the server's own clock. A save at or before it
+        is not offered again, which is what keeps an older save in another slot from replacing a newer one."""
+        new = _parse(stamp) if isinstance(stamp, str) else 0.0
+        if new and new > _parse(rec.doc.get("seen")):
+            rec.doc["seen"] = stamp
 
     # -- one or many games ----------------------------------------------------------------------------------
 
@@ -421,7 +524,8 @@ class SaveSync:
             "io": "A memory card file could not be read or written",
         }
         status = "conflict" if e.name == "conflict" else "error"
-        return result(rid, name, status, table.get(e.name, e.message), reason=e.name, problem=e.problem)
+        text = e.message if isinstance(e, FolderRefusal) and e.message != e.name else table.get(e.name, e.message)
+        return result(rid, name, status, text, reason=e.name, problem=e.problem)
 
     # -- negotiating --------------------------------------------------------------------------------------------
 
@@ -432,14 +536,13 @@ class SaveSync:
         device_id = s.get("auth.device_id")
         slot = s.get("saves.slot")
         saves = [self._client_state(p["ctx"], p["game"], p["local"]) for p in plans.values() if p["local"].get("unit_path")]
-        emulator_filter = sorted({e for p in plans.values() for e in p["ctx"].profile.compat})
-        try:
-            resp = client.negotiate(device_id, saves, rom_ids=list(plans), emulators=emulator_filter)
+        try:    # no emulator filter: a save is pulled whoever made it, as long as its contents can be read
+            resp = client.negotiate(device_id, saves, rom_ids=list(plans))
         except RommError as e:
             if e.kind == "not_found" and self.reregister:
                 try:
                     device_id = self.reregister()
-                    resp = client.negotiate(device_id, saves, rom_ids=list(plans), emulators=emulator_filter)
+                    resp = client.negotiate(device_id, saves, rom_ids=list(plans))
                 except RommError as e2:
                     return self._fail_all(plans, results, e2)
             else:
@@ -449,8 +552,9 @@ class SaveSync:
         done = failed = 0
         for rid, p in plans.items():
             game, rec = p["game"], p["rec"]
-            mine = [o for o in ops if o.get("rom_id") == rid and (o.get("slot") in (slot, None))]
-            op = self._pick(mine)
+            op = self._choose_op(rid, ops, slot, rec)
+            if op is None or op.get("action") in ("upload", "no_op"):
+                op = self._archival(client, rid, device_id, rec) or op
             try:
                 res = self._apply(client, p, op, device_id, session_id, resolutions.get(rid), trigger)
             except RommError as e:
@@ -485,6 +589,51 @@ class SaveSync:
                 if o.get("action") == action:
                     return o
         return None
+
+    def _archival(self, client: RommClient, rid: int, device_id: str, rec: Record) -> dict | None:
+        """The newest save of the game that is in no slot (uploaded by hand, or by an old client) when it is newer than anything
+        this device has taken, as a download. RomM's negotiation never offers these, and this is how Freegosy finds them."""
+        try:
+            listed = client.saves(rid, device_id=device_id)
+        except RommError:
+            return None
+        seen = _parse(rec.doc.get("seen"))
+        skipped = set(rec.doc.get("unusable") or [])
+        best = None
+        for sv in listed:
+            stamp = _parse(sv.get("updated_at"))
+            if (sv.get("slot") or STATE_NAME.search(sv.get("file_name") or "") or sv.get("id") in skipped
+                    or stamp <= seen or (best and stamp <= _parse(best.get("updated_at")))):
+                continue
+            best = sv
+        if best is None:
+            return None
+        return {"action": "download", "rom_id": rid, "save_id": best.get("id"), "file_name": best.get("file_name"), "slot": NO_SLOT,
+                "emulator": best.get("emulator"), "reason": "A save with no slot is newer than this device's",
+                "server_updated_at": best.get("updated_at"), "server_content_hash": best.get("content_hash")}
+
+    def _choose_op(self, rid: int, ops: list[dict], slot: str, rec: Record) -> dict | None:
+        """What to do for one game: the operation for this device's slot, or the newest save in any other slot when that
+        is newer than everything this device has taken. That is how a sync brings down the latest save wherever it was
+        made (Freegosy's slot, Argosy's, another handheld's) and still uploads to this device's own slot."""
+        mine = [o for o in ops if o.get("rom_id") == rid and o.get("slot") in (slot, None)]
+        own = self._pick(mine)
+        seen = _parse(rec.doc.get("seen"))
+        stamp = lambda o: _parse(o.get("server_updated_at"))      # noqa: E731
+        if own and own.get("action") == "download" and seen and stamp(own) <= seen:
+            own = None        # older than a save this device has already taken: restoring it would go back in time
+        skipped = set(rec.doc.get("unusable") or [])
+        others = [o for o in ops if o.get("rom_id") == rid and o.get("slot") not in (slot, None)
+                  and o.get("action") == "download" and o.get("save_id") not in skipped
+                  and not STATE_NAME.search(o.get("file_name") or "") and stamp(o) > seen]
+        best = max(others, key=stamp, default=None)
+        if best is None:
+            return own
+        if own is None or own.get("action") in ("upload", "no_op", "delete"):
+            return best
+        if own.get("action") in ("download", "conflict"):
+            return best if stamp(best) > stamp(own) else own
+        return own
 
     def _fail_all(self, plans: dict[int, dict], results: dict[int, dict], e: RommError) -> None:
         status = "offline" if e.kind == "network" else ("auth" if e.kind == "auth" else "error")
@@ -529,12 +678,23 @@ class SaveSync:
               and server_hash and server_hash != local.get("content_hash")):
             action = "conflict"
 
+        # the save this device holds came from another slot and has not changed since: this slot has no copy of it and needs none
+        if (action == "upload" and has_local and rec.last and rec.last.get("action") == "download"
+                and rec.last.get("slot") not in (None, self.settings.get("saves.slot")) and not local.get("changed")):
+            action = "no_op"
+        # the format changed (the server was upgraded, or the setting was): the same save is uploaded once more in the new one
+        elif (action == "no_op" and has_local and rec.last and (rec.last.get("format") or "card") != local.get("format")
+              and (not server_hash or server_hash == rec.last.get("server_hash"))):
+            action = "upload"
+
         if action == "no_op":
             rec.doc["conflict"] = None
-            if has_local and (rec.last is None or rec.last.get("local_hash") != local["content_hash"]):
+            if has_local and (rec.last is None or rec.last.get("local_hash") != local["content_hash"]) and server_hash == local["content_hash"]:
                 rec.doc["last"] = {"at": iso(), "action": "match", "local_hash": local["content_hash"],
                                    "server_hash": server_hash or local["content_hash"], "server_save_id": (op or {}).get("save_id"),
+                                   "format": local.get("format"), "slot": (op or {}).get("slot") or self.settings.get("saves.slot"),
                                    "unit": self._unit_info(Path(local["unit_path"])) if local.get("unit_path") else None}
+                self._see(rec, (op or {}).get("server_updated_at"))
                 rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
             return result(rid, name, "up_to_date" if has_local or has_server else "no_saves",
                           "Already in sync" if has_local or has_server else "No saves yet, here or on RomM")
@@ -566,20 +726,95 @@ class SaveSync:
         data = Path(local["unit_path"]).read_bytes()
         use_slot = slot or s.get("saves.slot")
         auto = s.get("saves.autocleanup") if autocleanup is None else autocleanup
-        saved = client.upload_save(
-            game["rom_id"], data, local["artifact"], emulator=p["ctx"].profile.romm_emulator, slot=use_slot,
-            device_id=device_id, content_hash=local["content_hash"], session_id=session_id, overwrite=force,
-            autocleanup=auto, autocleanup_limit=s.get("saves.autocleanup_limit"))
+        def send(overwrite: bool) -> dict:
+            return client.upload_save(
+                game["rom_id"], data, local["artifact"], emulator=EMULATOR_TAG, slot=use_slot,
+                device_id=device_id, content_hash=local["content_hash"], session_id=session_id, overwrite=overwrite,
+                autocleanup=auto, autocleanup_limit=s.get("saves.autocleanup_limit"))
+        try:
+            saved = send(force)
+        except RommError as e:
+            if e.kind != "conflict" or force:
+                raise
+            # RomM refuses an upload to a slot whose newest save this device has not synced. When that save is older than
+            # one this device has already taken (from another slot), this upload comes after it and may replace it.
+            heads = client.saves(game["rom_id"], device_id=device_id, slot=use_slot)
+            head = max(heads, key=lambda h: _parse(h.get("updated_at")), default=None)
+            if head and _parse(head.get("updated_at")) <= _parse(rec.doc.get("seen")):
+                saved = send(True)
+            else:
+                raise
         if use_slot == s.get("saves.slot"):
             rec.doc["last"] = {"at": iso(), "action": "upload", "local_hash": local["content_hash"],
                                "server_hash": saved.get("content_hash") or local["content_hash"],
                                "server_save_id": saved.get("id"), "identity_hash": local.get("identity_hash"),
+                               "format": local.get("format"), "slot": use_slot,
                                "unit": self._unit_info(Path(local["unit_path"]))}
             rec.doc["conflict"] = None
+            self._see(rec, saved.get("updated_at"))
             rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
         rec.note("upload", f"{len(data)} bytes to slot {use_slot}")
         return result(game["rom_id"], game["name"], "uploaded", "Uploaded this device's save to RomM",
                       save_id=saved.get("id"), slot=use_slot)
+
+    def _restore_card(self, ctx: Ctx, game: dict, rec: Record, unit: Path, p: dict, force_local: bool) -> dict:
+        """Writes a card image (sigil's unit) onto the card with sigil: the game's saves only, the rest untouched."""
+        state_out = p["dir"] / "state.restore"
+        ident = self.identity(game)
+        got = self.bridge.restore(layout=ctx.profile.layout, root=ctx.root, unit=unit, rom=game.get("main_file"),
+                                  identity=ident, platform_slug=ctx.profile.sigil_platform,
+                                  content=game.get("main_file"), options=ctx.options,
+                                  game_ids=[ident.get("title_id")] if ident.get("title_id") else None,
+                                  state_in=rec.state_path, state_out=state_out, overwrite_local=force_local)
+        rec.commit_state(state_out)
+        return got
+
+    def _restore_folders(self, ctx: Ctx, game: dict, rec: Record, unit: Path, p: dict, force_local: bool) -> dict:
+        """Writes a downloaded zip onto the card: whichever of the shapes in use it has (the game's folders at the root, a
+        whole folder card, or a memory card image inside). Raises savefolders.ArchiveError for one that cannot be used."""
+        ident = self.identity(game)
+        save_id = ident.get("save_id") or ident.get("title_id") or ""
+        data_hash = savefolders.romm_content_hash(unit.read_bytes())
+        with zipfile.ZipFile(unit) as zf:
+            pl = savefolders.plan(zf, save_id)
+            if pl.shape == "image":          # an older upload: the whole memory card, zipped
+                image = self._pick_image(zf, pl.images, p["dir"], save_id)
+                return self._restore_card(ctx, game, rec, image, p, force_local)
+            cards = [sl for sl in ctx.cfg.slots if sl.enabled and sl.kind == "folder"]
+            if not cards:       # the card here is a file: sigil writes the game's save folders into it
+                return self._restore_card(ctx, game, rec, savefolders.clean_zip(zf, pl, p["dir"] / "folders.zip"), p, force_local)
+            holding = [sl for sl in cards if savefolders.find_folders([sl.path], save_id)]
+            target = (holding or cards)[0]
+            if (not force_local and rec.last and rec.last.get("format") == "folders"
+                    and savefolders.find_folders([sl.path for sl in ctx.cfg.slots if sl.enabled and sl.kind == "folder"], save_id)):
+                now = self._collect_folders(ctx, game, ident, rec, p["dir"] / "pre")
+                if now.get("has_unit") and now.get("changed"):
+                    raise FolderRefusal("conflict", "The save on this device changed since the last sync")
+            if not (target.path / savefolders.SUPERBLOCK).exists():
+                self.bridge.init_folder_card(ctx.root, target.name)       # a card the emulator can open
+            scratch = ctx.data_dir / ".romm-armada-restore"          # one at a time: the engine's lock serialises restores
+            written = savefolders.restore(zf, pl, target.path, save_id, scratch)
+        log.info("restored %s onto %s", ", ".join(written), target.path)
+        return {"content_hash": data_hash, "identity_hash": hashlib.md5(save_id.encode()).hexdigest()}
+
+    def _pick_image(self, zf: zipfile.ZipFile, images: list, work: Path, save_id: str) -> Path:
+        """The memory card image in a zip that holds this game's saves (else the only one), extracted for sigil."""
+        work.mkdir(parents=True, exist_ok=True)
+        chosen: Path | None = None
+        for n, info in enumerate(images):
+            path = work / f"card-{n}.ps2"
+            with zf.open(info) as src, open(path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            try:
+                names = [str(e.get("name", "")) for e in self.bridge.card_list(str(path)).get("entries") or []]
+            except (SavebridgeError, SigilRefusal):
+                continue
+            if any(savefolders.folder_matches(nm, save_id) for nm in names):
+                return path
+            chosen = chosen or path
+        if chosen is None:
+            raise savefolders.ArchiveError("RomM's save holds a memory card this plugin cannot read")
+        raise savefolders.ArchiveError("RomM's save holds nothing for this game")
 
     def _download(self, client: RommClient, p: dict, op: dict | None, device_id: str, session_id: int | None,
                   force_local: bool, save_id: int | None = None) -> dict:
@@ -593,20 +828,19 @@ class SaveSync:
             return result(rid, name, "busy", "The emulator started; the save is restored after it closes")
         data = client.download_save(save_id, device_id, session_id=session_id)
         expect = (op or {}).get("server_content_hash")
-        if expect and hashlib.md5(data).hexdigest() != expect:
+        # RomM hashes a zip by its entries and anything else by its bytes; servers that predate that fix hashed every file by bytes
+        if expect and expect not in (savefolders.romm_content_hash(data), hashlib.md5(data).hexdigest()):
             return result(rid, name, "error", "The download did not match RomM's checksum; nothing was changed")
-        unit = p["dir"] / "incoming.bin"
+        is_zip = zipfile.is_zipfile(io.BytesIO(data))
+        unit = p["dir"] / ("incoming.zip" if is_zip else "incoming.bin")
         unit.write_bytes(data)
         if s.get("saves.backups"):
             cards = [sl.path for sl in ctx.cfg.slots if sl.enabled]
             backup_cards(cards, rid, "before-restore", s.get("saves.backup_keep"))
-        state_out = p["dir"] / "state.restore"
-        got = self.bridge.restore(layout=ctx.profile.layout, root=ctx.root, unit=unit, rom=game.get("main_file"),
-                                  identity=self.identity(game), platform_slug=ctx.profile.sigil_platform,
-                                  content=game.get("main_file"), options=ctx.options,
-                                  game_ids=[self.identity(game).get("title_id")] if self.identity(game).get("title_id") else None,
-                                  state_in=rec.state_path, state_out=state_out, overwrite_local=force_local)
-        rec.commit_state(state_out)
+        try:
+            got = (self._restore_folders if is_zip else self._restore_card)(ctx, game, rec, unit, p, force_local)
+        except savefolders.ArchiveError as e:
+            return self._unusable(rec, rid, name, save_id, op, str(e))
         # what a collect gives now is what the server should count as this device's copy
         post = self._collect(ctx, game, rec, p["dir"] / "post")
         rec.commit_state(Path(post["state_tmp"]) if post.get("state_tmp") else None)
@@ -615,20 +849,38 @@ class SaveSync:
             client.confirm_download(save_id, device_id, baseline)
         except RommError as e:
             log.debug("could not confirm the download: %s", e)
+        stamp = (op or {}).get("server_updated_at") or ((rec.doc.get("conflict") or {}).get("server") or {}).get("updated_at")
         rec.doc["last"] = {"at": iso(), "action": "download", "local_hash": baseline,
                            "server_hash": got.get("content_hash"), "server_save_id": save_id,
-                           "identity_hash": got.get("identity_hash"), "unit": self._unit_info(unit)}
+                           "identity_hash": got.get("identity_hash"), "format": post.get("format"),
+                           "slot": (op or {}).get("slot") or ((rec.doc.get("conflict") or {}).get("server") or {}).get("slot")
+                           or s.get("saves.slot"), "unit": self._unit_info(unit)}
         rec.doc["conflict"] = None
-        rec.note("download", f"{len(data)} bytes from save {save_id}")
-        return result(rid, name, "downloaded", "Restored RomM's save onto this device", save_id=save_id)
+        self._see(rec, stamp)
+        from_slot = rec.doc["last"]["slot"]
+        rec.note("download", f"{len(data)} bytes from save {save_id}, slot {from_slot}")
+        where = f" (from slot {from_slot})" if from_slot != s.get("saves.slot") else ""
+        return result(rid, name, "downloaded", f"Restored RomM's save onto this device{where}", save_id=save_id)
+
+    @staticmethod
+    def _unusable(rec: Record, rid: int, name: str, save_id: int, op: dict | None, why: str) -> dict:
+        """RomM's newest save is one this plugin cannot restore: say so once, and leave it out of later syncs."""
+        skipped = rec.doc.setdefault("unusable", [])
+        if save_id not in skipped:
+            skipped.append(save_id)
+            del skipped[:-UNUSABLE_LIMIT]
+        what = (op or {}).get("file_name") or f"save {save_id}"
+        rec.note("skipped", f"{what}: {why}")
+        return result(rid, name, "error", f"{why} ({what}). Nothing was changed, and that save is skipped from now on")
 
     def _make_conflict(self, client: RommClient, p: dict, reason: str, detail: str, device_id: str, slot: str,
                        op: dict | None = None) -> dict:
         game, rec, local = p["game"], p["rec"], p["local"]
+        use_slot = (op or {}).get("slot") or slot      # the save in conflict may be in another slot than this device's
         server: dict = {"save_id": (op or {}).get("save_id"), "updated_at": (op or {}).get("server_updated_at"),
-                        "hash": (op or {}).get("server_content_hash"), "device": ""}
+                        "hash": (op or {}).get("server_content_hash"), "device": "", "slot": use_slot}
         try:
-            for sv in client.saves(game["rom_id"], device_id=device_id, slot=slot)[:1]:
+            for sv in client.saves(game["rom_id"], device_id=device_id, slot=use_slot)[:1]:
                 server.update({"save_id": sv.get("id"), "updated_at": sv.get("updated_at"), "hash": sv.get("content_hash")})
                 for d in sv.get("device_syncs") or []:
                     if d.get("device_id") != device_id and d.get("device_name"):

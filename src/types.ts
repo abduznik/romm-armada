@@ -15,6 +15,7 @@ export type Settings = {
   saves: {
     enabled: boolean; slot: string; push_on_exit: boolean; pull_on_startup: boolean; pull_when_idle: boolean;
     pull_interval_min: number; conflict: "ask" | "server" | "device" | "newest"; card_type: "folder" | "auto";
+    format: "auto" | "folders" | "card";
     backups: boolean; backup_keep: number; autocleanup: boolean; autocleanup_limit: number; playtime: boolean;
     notify: boolean;
   };
@@ -36,7 +37,7 @@ export type EmulatorInfo = {
 export type Conflict = {
   rom_id: number; name: string; reason: "first_contact" | "both_changed" | "server_moved" | string; detail: string;
   local: { updated_at: string | null; hash: string; has_saves: boolean };
-  server: { save_id: number | null; updated_at: string | null; hash: string | null; device: string };
+  server: { save_id: number | null; updated_at: string | null; hash: string | null; device: string; slot?: string };
   at: string;
 };
 
@@ -77,11 +78,11 @@ export type SyncResult = {
 };
 
 /** The card image RomM keeps for a game: its size and the game saves inside it (`bytes` is the data they take). */
-export type SaveUnit = { size: number; contents: string[]; bytes: number };
+export type SaveUnit = { kind?: "folders" | "card"; size: number; contents: string[]; bytes: number };
 
 export type SyncStatus = {
   rom_id: number; supported: boolean; enabled?: boolean; emulator?: string; data_dir?: string; data_dir_exists?: boolean;
-  last?: { at: string; action: string; unit?: SaveUnit | null } | null; conflict?: Conflict | null;
+  last?: { at: string; action: string; slot?: string; format?: string; unit?: SaveUnit | null } | null; conflict?: Conflict | null;
   history?: { at: string; action: string; detail: string }[];
   backups?: { name: string; path: string; size: number }[];
   slots?: { slot: number; enabled: boolean; name: string; kind: string }[];
@@ -111,6 +112,7 @@ export type Diagnostics = {
   paths: Record<string, string>;
   emulator: { name: string; data_dir: string; ini: string; ini_exists: boolean; executable: string; found_by: string };
   library_free: string;
+  saves: { slot: string; tag: string; format: string; using: "folders" | "card"; server_version: string; server_units: boolean };
 };
 
 export type BiosFile = { name: string; size: number; kind: "bios" | "extra" };

@@ -13,7 +13,7 @@ const settingsDoc = () => ({
   auth: { device_id: "d1", device_name: "Armada", username: "admin", method: "pairing", signed_in: true },
   library: { root: "/home/armada/ROMs", folder_style: "esde", platform_dirs: {}, include_extras: true, verify: "crc", max_concurrent: 1,
     speed_limit_kbs: 0, min_free_mb: 512, extract_zip: false, resume_on_start: true, remote_installs: false },
-  saves: { enabled: true, slot: "autosave", push_on_exit: true, pull_on_startup: true, pull_when_idle: true, pull_interval_min: 30,
+  saves: { enabled: true, slot: "armadaos", format: "auto", push_on_exit: true, pull_on_startup: true, pull_when_idle: true, pull_interval_min: 30,
     conflict: "ask", card_type: "folder", backups: true, backup_keep: 5, autocleanup: true, autocleanup_limit: 10, playtime: true, notify: true },
   emulators: { ps2: { emulator: "auto", data_dir: "", executable: "" } },
   advanced: { request_timeout: 30, debug: false },
@@ -37,7 +37,7 @@ const overview = (over: any = {}) => ({
 const conflict = {
   rom_id: 101, name: "Test Game (USA)", reason: "first_contact", detail: "", at: "2026-10-25T10:00:00Z",
   local: { updated_at: "2026-10-25T09:00:00Z", hash: "aa", has_saves: true },
-  server: { save_id: 7, updated_at: "2026-10-24T09:00:00Z", hash: "bb", device: "Pixel" },
+  server: { save_id: 7, updated_at: "2026-10-24T09:00:00Z", hash: "bb", device: "Pixel", slot: "freegosy" },
 };
 
 const detail = (over: any = {}) => ({
@@ -248,7 +248,7 @@ describe("the panel", () => {
     assert.match(text(h), /1 save needs a decision/);
     await click(h, "1 save needs a decision");
     assert.match(text(h), /never synced this game/);
-    assert.match(text(h), /from Pixel/);
+    assert.match(text(h), /from Pixel.*slot freegosy/);
     await click(h, "Keep RomM's save");
     assert.equal(modals.length, 1, "it asks before replacing anything");
     await act(async () => (modals[0].props as any).onOK());
@@ -512,6 +512,44 @@ describe("the panel", () => {
     assert.match(text(h), /8\.\d MB card image: BASLUS-20152, 6\.0 KB of save data/);
     assert.match(text(h), /holds only this game's save\. The card on this device stays a folder card/);
     assert.match(text(h), /Memory card.*Mcd001\.ps2 \(folder\)/);
+    await h.unmount();
+  });
+
+  test("a save pulled from another client says where it came from, and the zip of save folders is explained", async () => {
+    backendWith({
+      rom: () => detail({
+        installed: true, local: { main_file: "/home/armada/ROMs/ps2/Tekken 4.iso", path: "/home/armada/ROMs/ps2", size: 2e9, installed_at: "2026-10-25T09:00:00Z" },
+        saves: {
+          rom_id: 101, supported: true, enabled: true, emulator: "ARMSX2", slots: [{ slot: 1, enabled: true, name: "Mcd001.ps2", kind: "folder" }],
+          last: { at: new Date().toISOString(), action: "download", slot: "freegosy", format: "folders",
+            unit: { kind: "folders", size: 253_000, contents: ["BASLUS-20328TEKKEN4"], bytes: 380_000 } },
+        },
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Browse the library");
+    await click(h, "PlayStation 2");
+    await click(h, "Test Game (USA)");
+    assert.match(text(h), /just now · from freegosy/);
+    assert.match(text(h), /247 KB zip of save folders: BASLUS-20328TEKKEN4, 371 KB of save data/);
+    assert.match(text(h), /the way Argosy and Freegosy do/);
+    assert.doesNotMatch(text(h), /card image/);
+    await h.unmount();
+  });
+
+  test("the save format and the slot are set in the saves settings, with what each means", async () => {
+    const get = backendWith();
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Settings");
+    await click(h, "Saves and memory card");
+    assert.match(text(h), /Slot on RomM.*armadaos/);
+    assert.match(text(h), /The newest save in any slot is still pulled, whoever made it/);
+    assert.match(text(h), /Automatic follows the server like Argosy does/);
+    await choose(h, "Save format on RomM", "folders");
+    assert.deepEqual(backend.calls.filter((c) => c.method === "settings_set").pop()!.args, [{ saves: { format: "folders" } }]);
+    assert.equal(get().saves.format, "folders");
     await h.unmount();
   });
 

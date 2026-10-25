@@ -118,6 +118,7 @@ function ConflictCard({ c, onDone }: { c: Conflict; onDone: (msg: string) => voi
         <Muted>
           This device: {c.local.has_saves ? ago(c.local.updated_at) : "no save"} · RomM: {ago(c.server.updated_at)}
           {c.server.device ? ` (from ${c.server.device})` : ""}
+          {c.server.slot ? ` · slot ${c.server.slot}` : ""}
         </Muted>
       </PanelSectionRow>
       <PanelSectionRow>

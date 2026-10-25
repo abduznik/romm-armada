@@ -20,6 +20,7 @@ class SyncBase(Env):
         self.b = Device(self, "handheld-b")
         for d in (self.a, self.b):
             with d.active():
+                d.settings.update({"saves": {"format": "card", "slot": "autosave"}})      # sigil's card image, as these tests were written for
                 d.install(self.rom)
                 d.engine()
 
@@ -40,7 +41,7 @@ class FirstUploadTests(SyncBase):
         self.assertEqual(r["status"], "uploaded", r)
         saves = self.server_saves()
         self.assertEqual(len(saves), 1)
-        self.assertEqual(saves[0]["emulator"], "armsx2_refresh")          # the label Argosy gives ARMSX2 on Android
+        self.assertEqual(saves[0]["emulator"], "armadaos")                # this plugin's own tag, as Freegosy's is "freegosy"
         self.assertIn("[", saves[0]["file_name"])                         # RomM tags slotted versions
         self.assertEqual(len(saves[0]["data"]), 8650752)                  # sigil's unit: a per-game memory card
         self.assertEqual(hashlib.md5(saves[0]["data"]).hexdigest(), saves[0]["content_hash"])

@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import zipfile
 import zlib
 from pathlib import Path
 
@@ -107,7 +108,18 @@ class RealRommTests(unittest.TestCase):
 
     @classmethod
     def scan(cls):
-        cls.admin.request("POST", "/api/tasks/scan", json_body={"type": "quick", "apis": []})
+        try:
+            cls.admin.request("POST", "/api/tasks/scan", json_body={"type": "quick", "apis": []})
+        except cls.HttpError as e:
+            if e.status not in (404, 405):
+                raise
+            # RomM before 5.4 starts a scan over its websocket only. The scan function is run inside the container instead,
+            # the way its own scheduled rescan calls it.
+            code = ("import asyncio\n"
+                    "from endpoints.sockets.scan import scan_platforms\n"
+                    "from handler.scan_handler import ScanType\n"
+                    "asyncio.run(scan_platforms(platform_ids=[], metadata_sources=[], scan_type=ScanType.QUICK))\n")
+            sh("podman", "exec", "-w", "/backend", cls.tag, "python", "-c", code, timeout=300)
         end = time.time() + 180
         while time.time() < end:
             page = cls.admin.get_json("/api/roms", params={"limit": 10})
@@ -284,31 +296,38 @@ class RealRommTests(unittest.TestCase):
         d.rom_id = rom["id"]
         return d
 
-    def test_04_save_round_trip_and_hashes_on_real_romm(self):
+    def test_04_save_folders_round_trip_and_hashes_on_real_romm(self):
+        """The default: a zip of the game's save folders in the armadaos slot, hashed by RomM the way the plugin hashes it."""
         a, b = self.installed_device("save-a"), self.installed_device("save-b")
         rid = a.rom_id
         a.play(b"chapter one" * 80)
+        a.play(b"someone else's game", serial_folder="BESLES-99999")
         with a.active():
             r = a.sync.sync([rid])[0]
         self.assertEqual(r["status"], "uploaded", r)
 
         saves = self.admin.get_json("/api/saves", params={"rom_id": rid})
-        mine = [s for s in saves if s.get("slot") == "autosave"]
+        mine = [s for s in saves if s.get("slot") == "armadaos"]
         self.assertEqual(len(mine), 1, saves)
         s = mine[0]
-        self.assertEqual(s["emulator"], "armsx2_refresh")
-        # the file RomM stored is the unit sigil built, and RomM's content_hash is the MD5 sigil reported
+        self.assertEqual(s["emulator"], "armadaos")
+        self.assertRegex(s["file_name"], r"^Test Game \(USA\) \[.*\]\.zip$")
         stored = self.admin.request("GET", f"/api/saves/{s['id']}/content").body
-        self.assertEqual(len(stored), 8650752)
-        self.assertEqual(hashlib.md5(stored).hexdigest(), s["content_hash"])
+        import io
+        names = zipfile.ZipFile(io.BytesIO(stored)).namelist()
+        self.assertIn("BASLUS-20152/save.dat", names)
+        self.assertFalse([n for n in names if "BESLES" in n], "only this game's folder")
+        self.assertLess(len(stored), 20_000)
+        # RomM hashes a zip by its entries; the hash the plugin computed for its own zip is the one RomM gave the upload
         with a.active():
             rec = json.loads((a.plugin / "settings" / "state" / "sync" / f"{rid}.json").read_text())
         self.assertEqual(rec["last"]["local_hash"], s["content_hash"])
+        self.assertEqual(rec["last"]["format"], "folders")
 
         # nothing to do the second time, and RomM agrees
         with a.active():
             self.assertEqual(a.sync.sync([rid])[0]["status"], "up_to_date")
-        self.assertEqual(len([x for x in self.admin.get_json("/api/saves", params={"rom_id": rid}) if x["slot"] == "autosave"]), 1)
+        self.assertEqual(len([x for x in self.admin.get_json("/api/saves", params={"rom_id": rid}) if x["slot"] == "armadaos"]), 1)
 
         # the second handheld gets it, as a folder card
         with b.active():
@@ -318,6 +337,29 @@ class RealRommTests(unittest.TestCase):
         self.assertEqual(b.save_bytes(), b"chapter one" * 80)
         with b.active():
             self.assertEqual(b.sync.sync([rid])[0]["status"], "up_to_date")
+
+    def test_04b_card_image_format_on_real_romm(self):
+        """sigil's per-game card image, for servers that keep units (RomM 5.5 and newer) or when asked for."""
+        a, b = self.installed_device("card-a"), self.installed_device("card-b")
+        for d in (a, b):
+            d.settings.update({"saves": {"format": "card", "slot": "autosave"}})
+        rid = a.rom_id
+        a.play(b"card image" * 80)
+        with a.active():
+            r = a.sync.sync([rid])[0]
+            # the save the earlier test left in the armadaos slot is a different save: this device has never synced, so it asks
+            self.assertEqual((r["status"], r["conflict"]["reason"]), ("conflict", "first_contact"), r)
+            r = a.sync.sync([rid], resolutions={rid: "device"})[0]
+        self.assertEqual(r["status"], "uploaded", r)
+        mine = [s for s in self.admin.get_json("/api/saves", params={"rom_id": rid}) if s.get("slot") == "autosave"]
+        self.assertEqual(len(mine), 1, mine)
+        stored = self.admin.request("GET", f"/api/saves/{mine[0]['id']}/content").body
+        self.assertEqual(len(stored), 8650752)
+        self.assertEqual(hashlib.md5(stored).hexdigest(), mine[0]["content_hash"])
+        with b.active():
+            r = b.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "downloaded", r)
+        self.assertEqual(b.save_bytes(), b"card image" * 80)
 
     def test_05_conflicts_on_real_romm(self):
         a, b = self.installed_device("conf-a"), self.installed_device("conf-b")
@@ -349,6 +391,41 @@ class RealRommTests(unittest.TestCase):
                 "rom_id": a.rom_id, "save_slot": "autosave", "start_time": ts_to_iso(now - 90).split(".")[0] + "Z",
                 "end_time": ts_to_iso(now).split(".")[0] + "Z", "duration_ms": 90_000}])
         self.assertEqual(out["created_count"], 1)
+
+    def test_06b_the_latest_save_is_pulled_from_any_slot_on_real_romm(self):
+        """A save Freegosy made, in its own slot and shape, is what a fresh handheld gets: the newest save wins."""
+        import io
+        from rommarmada.http import multipart
+        from rommarmada.savefolders import romm_content_hash
+        from test_folders import freegosy_zip
+        d = self.installed_device("anyslot")
+        rid = d.rom_id
+        data = freegosy_zip("BASLUS-20152AC04", {"icon.sys": b"PS2D" + b"\0" * 60 + b"x", "save.dat": b"from the pc" * 50})
+        body, ctype = multipart(None, [("saveFile", "Test Game (USA).zip", data, "application/zip")])
+        self.admin.request("POST", "/api/saves", params={"rom_id": rid, "emulator": "freegosy", "slot": "freegosy"}, data=body,
+                           headers={"Content-Type": ctype}, timeout=60, retries=0)
+        theirs = [s for s in self.admin.get_json("/api/saves", params={"rom_id": rid}) if s["slot"] == "freegosy"]
+        self.assertEqual(len(theirs), 1)
+        self.assertEqual(theirs[0]["content_hash"], romm_content_hash(data), "the real server hashes a zip the way the plugin does")
+        with d.active():
+            r = d.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "downloaded", r)
+        card = d.card()
+        self.assertEqual((card / "BASLUS-20152AC04" / "save.dat").read_bytes(), b"from the pc" * 50)
+        self.assertFalse(any(p.name == "freegosy_sync.txt" for p in card.rglob("*")))
+        with d.active():
+            self.assertEqual(d.sync.sync([rid])[0]["status"], "up_to_date")
+        # playing here goes to the plugin's own slot, and the other slot is left as it was
+        time.sleep(0.05)
+        (card / "BASLUS-20152AC04" / "save.dat").write_bytes(b"continued on the handheld" * 50)
+        with d.active():
+            r = d.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "uploaded", r)
+        now = self.admin.get_json("/api/saves", params={"rom_id": rid})
+        self.assertEqual(len([s for s in now if s["slot"] == "freegosy"]), 1)
+        newest = max((s for s in now if s["slot"] == "armadaos"), key=lambda s: s["updated_at"])
+        zf = zipfile.ZipFile(io.BytesIO(self.admin.request("GET", f"/api/saves/{newest['id']}/content").body))
+        self.assertEqual(zf.read("BASLUS-20152AC04/save.dat"), b"continued on the handheld" * 50)
 
     def test_07_bios_files_from_real_romm_firmware(self):
         """The firmware list and download RomM really serves, into the emulator's BIOS folder; and the real server's

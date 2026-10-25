@@ -19,7 +19,7 @@ The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Arm
 
 ## Install
 
-1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.2.1.zip`.
+1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.3.0.zip`.
 2. Open the plugin from Decky's Quick Access menu.
 
 ## Connect
@@ -36,33 +36,52 @@ The device registers itself with RomM, so its saves are tracked per device ("con
 
 ## Saves and the memory card
 
-Sync works per game, in RomM's `autosave` slot:
+Sync works per game:
 
 1. **After you close the emulator**, the plugin looks at that game's saves and uploads them if they changed. It knows
    the game from the emulator's command line or, when you started it from ARMSX2's own menu, from the disc image the
    emulator keeps open; that game's play time is reported to RomM too.
 2. **While no emulator runs** (at start, every N minutes, after waking from sleep) it brings down saves that are
-   newer on RomM, and when you install a game it fetches the save the other devices made.
+   newer on RomM, and when you install a game it fetches the save made elsewhere. Pressing *Sync* does the same on demand.
 3. **Nothing is replaced on a guess.** If this device never synced a game and RomM already has a *different* save,
    or both sides changed, the plugin asks (*Keep RomM's / Keep this device's / Keep both*), or follows the policy
    you choose in Settings. A card is backed up before anything is written to it.
 
+### Tagged `armadaos`, pulled from anywhere
+
+Every save this device uploads is tagged **`armadaos`**, as its slot and as its emulator on RomM (Freegosy's are
+`freegosy`). The slot is a setting; the tag is only for naming. **Pulling ignores the tag:** a sync looks at every save
+RomM has for the game, in any slot, whoever made it (Freegosy, Argosy, another handheld), and brings down the newest one
+this device has not taken yet. Playing here then uploads to the `armadaos` slot and leaves the others as they were.
+A save older than one already taken is never restored over it, and a save state filed as a save is skipped.
+
+### What a save looks like on RomM
+
+- **Save folders (zip)**: a zip with the game's save folders at its root (`BASLUS-21269BULLY000/…`): a few hundred KB,
+  never the other games on the card. This is what Argosy and Freegosy upload to a RomM before 5.5, and it is the default
+  for such a server. RomM hashes a zip by its entries, so the same save is the same save however it was zipped.
+- **Card image**: sigil's per-game 8.3 MB `.ps2`, which Argosy uses on RomM 5.5 and newer (the server says so in its
+  heartbeat). Used for such a server, for a file memory card, or when the setting asks for it.
+- *Settings → Saves → Save format on RomM*: Automatic (follows the server), Save folders, or Card image. A server that
+  changes format gets the same save once more in the new one.
+
+What it can **restore** is wider: both of the above, Freegosy's bundles (its `freegosy_sync.txt` is ignored), a whole folder
+card in a zip (only this game's folders are taken), a memory card image inside a zip, and a whole shared `.ps2` file
+card (only this game's saves are taken). A restore replaces the game's own save folders and nothing else on the card,
+and puts everything back if it fails half way. A save that cannot be read is skipped once, with the reason, and not
+asked for again. The game screen shows what RomM holds and which slot the last save came from.
+
 ### Folder memory cards
 
 PS2 saves are kept on **PCSX2 folder memory cards** (a folder per save inside `memcards/Mcd001.ps2/`), the same
-mode Argosy uses on Android. A restore writes only that game's save folders; other games' saves and the card file
-are never rewritten.
-
-**What RomM stores.** One standard memory card image (`.ps2`, 8.3 MB like every PS2 card) per upload, holding only
-that game's save folder (a few KB of data, not the other games on your card). It is the same whether the card here is
-a folder or a file, and it is the format Argosy reads and writes, which is what lets a save made here continue on
-another device. Your card on the handheld stays a folder card. The game screen shows what is in the image. Each upload
-is a new version in the slot; *Keep only recent versions on RomM* with *Versions on RomM* (default 10) bounds how many stay.
+mode Argosy uses on Android. A restore writes only that game's save folders; other games' saves are never rewritten.
+Each upload is a new version in the slot; *Keep only recent versions on RomM* with *Versions on RomM* (default 10) bounds
+how many stay.
 
 - No card yet → the plugin creates a formatted folder card.
 - A file card with no saves → replaced by a folder card (the old file is kept beside it as `.bak`).
 - A file card **with** saves is never touched: convert it in the emulator (Settings → Memory Cards → Convert), or set
-  *Card type* to *Use what the emulator has*.
+  *Card type* to *Use what the emulator has* (saves then travel as card images).
 
 ## BIOS files
 
@@ -119,17 +138,20 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
 
 **Verified on a PC**
 
-- Against **a real RomM 5.4.1** (`test/test_real_romm.py`): pairing with a real code (works once, the 5-a-minute limit
-  is explained, a token without the right permissions is explained), approving a code shown on the device, listing
-  the library, a real download checked against RomM's CRC32, a save uploaded to the `autosave` slot as
-  `armsx2_refresh` whose RomM `content_hash` equals the MD5 sigil reported, a second device restoring it onto a
-  folder card, "first contact" and "keep both" conflict handling, and play time reaching RomM. This run also caught
-  that RomM merges devices with the same hostname, so each install now registers under its own. Also against the real
-  server: firmware uploaded to a platform, listed, downloaded and checked into the BIOS folder, and its refusal of a
-  sign-in that lacks the firmware permission.
+- Against **a real RomM, 5.4.1 and 5.0.0** (the version the plugin's first user runs; `test/test_real_romm.py`, 10 checks
+  each): pairing with a real code (works once, the 5-a-minute limit is explained, a token without the right permissions
+  is explained), approving a code shown on the device, listing the library, a real download checked against RomM's
+  CRC32, a save uploaded as a zip of the game's save folders in the `armadaos` slot whose RomM `content_hash` equals the
+  one the plugin computed, a second device restoring it onto a folder card, the card image format against the real
+  server, "first contact" and "keep both" conflict handling, play time reaching RomM, a Freegosy-shaped save in its own
+  slot pulled as the latest and the handheld's next save going to the `armadaos` slot, and firmware uploaded, listed,
+  downloaded and checked into the BIOS folder (with the server's refusal of a sign-in that lacks the firmware
+  permission). These runs also caught that RomM merges devices with the same hostname, so each install now registers
+  under its own, and that 5.0.0 starts scans only over its websocket (the test harness runs the scan inside the container).
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 162 backend tests (downloads with resume and corruption, save sync, BIOS install, the watcher, remote installs, the
-  Decky RPC layer under a stand-in for Decky's module) and 20 rendered panel scenarios (typed pairing code, device
+- 210 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every
+  archive shape, BIOS install, the watcher, remote installs, the Decky RPC layer under a stand-in for Decky's module) and
+  22 rendered panel scenarios (typed pairing code, device
   approval, browsing, downloading, conflicts, BIOS files, settings, disconnecting). The panel also type-checks against
   `@decky/ui` 4.11.
 - **On a handheld** (reported by its owner, 0.1.0 on a Retroid with Armada OS): ARMSX2 launched, the sync settled on

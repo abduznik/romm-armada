@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0
+
+Saves now work the way Argosy and Freegosy do on the user's RomM (5.0.0), and a sync takes the latest save from anywhere.
+
+- **Saves go to RomM as a zip of the game's save folders** (`BASLUS-21269BULLY000/…`, a few hundred KB) instead of an
+  8 MB memory card image, when the server does not keep sigil units. RomM 5.5 and newer say so in their heartbeat
+  (`SAVE_SYNC.SNAPSHOTS`) and still get the card image, as Argosy does. *Settings → Saves → Save format on RomM*:
+  Automatic, Save folders or Card image. A server that changes format gets the same save once more in the new one.
+- **Tagged `armadaos`**: the slot (default; existing installs move from the old `autosave` default) and the emulator tag
+  of everything this device uploads, as Freegosy's are `freegosy`.
+- **Pulls the latest save from any slot and any type.** A sync used to look only at its own slot, so Freegosy's saves
+  (and Argosy's) were never seen; it now brings down the newest save RomM has for the game that this device has not
+  taken, from whichever slot. It reads Freegosy's bundles, a zip of the game's folders, a whole folder card in a zip, a
+  memory card image (also inside a zip, also a whole shared card, from which only the game's saves are taken) and sigil's
+  per-game card. An older save than one already taken, a save state filed as a save, and a save that cannot be read are
+  skipped. Where the last save came from is shown on the game screen.
+- A restore of save folders replaces the game's own folders whole, takes nothing else off the card, writes only after
+  checking the archive's paths, and puts the old folders back if it fails part way.
+- About shows the RomM version the server reported and how saves go to it.
+
 ## 0.2.1
 
 Found by reading the log of 0.2.0 on a real Armada.

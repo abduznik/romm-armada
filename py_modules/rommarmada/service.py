@@ -439,6 +439,16 @@ class Service:
         savesmod.Record(rom_id).reset()   # what sigil remembered no longer describes the card
         return {"ok": True, "restored": restored, "message": f"Restored {', '.join(restored) or 'nothing'}"}
 
+    def _saves_view(self) -> dict:
+        """How saves are kept on the server: what the setting says, and what the server last said (remembered, no request)."""
+        s = self.settings
+        known = read_json(paths.state_dir() / "server.json", {})
+        known = known if isinstance(known, dict) and known.get("url") == s.get("server.url") else {}
+        wanted = s.get("saves.format")
+        using = wanted if wanted != "auto" else ("card" if known.get("units") else "folders")
+        return {"slot": s.get("saves.slot"), "tag": savesmod.EMULATOR_TAG, "format": wanted, "using": using,
+                "server_version": known.get("version") or "", "server_units": bool(known.get("units"))}
+
     # -- BIOS files ----------------------------------------------------------------------------------------------
 
     def _ps2(self) -> tuple[emulators.Resolved, Path]:
@@ -540,4 +550,5 @@ class Service:
             "emulator": {"name": r.profile.name, "data_dir": str(r.data_dir), "ini": str(r.ini), "ini_exists": r.ini.exists(),
                          "executable": r.executable, "found_by": r.why},
             "library_free": human_bytes(free_bytes(s.get("library.root"))),
+            "saves": self._saves_view(),
         }

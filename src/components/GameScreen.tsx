@@ -199,11 +199,13 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
               </ButtonItem>
             </PanelSectionRow>
           ) : null}
-          <Info label="Last sync">{saves.last ? ago(saves.last.at) : "never"}</Info>
+          <Info label="Last sync">
+            {saves.last ? ago(saves.last.at) + (saves.last.action === "download" && saves.last.slot ? ` · from ${saves.last.slot}` : "") : "never"}
+          </Info>
           {saves.last?.unit && saves.last.unit.size > 0 ? (
             <>
               <Info label="RomM keeps">
-                {`${bytes(saves.last.unit.size)} card image: ${
+                {`${bytes(saves.last.unit.size)} ${saves.last.unit.kind === "folders" ? "zip of save folders" : "card image"}: ${
                   saves.last.unit.contents.length
                     ? `${saves.last.unit.contents.join(", ")}, ${bytes(saves.last.unit.bytes)} of save data`
                     : "no saves"
@@ -211,8 +213,9 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
               </Info>
               <PanelSectionRow>
                 <Muted>
-                  RomM stores a game's save as a standard memory card image, the format Argosy and every PS2 emulator reads. It
-                  holds only this game's save. The card on this device stays a folder card.
+                  {saves.last.unit.kind === "folders"
+                    ? "RomM keeps this game's save folders in a zip, the way Argosy and Freegosy do. Only this game's folders are in it. The card on this device stays a folder card."
+                    : "RomM keeps this game's save as a standard memory card image, the format RomM 5.5 and newer and sigil use. It holds only this game's save. The card on this device stays a folder card."}
                 </Muted>
               </PanelSectionRow>
             </>

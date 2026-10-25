@@ -176,7 +176,23 @@ function SavesSettings({ nav }: { nav: Nav }) {
           ]}
         />
         <Info label="Slot on RomM">{st.s?.saves.slot ?? ""}</Info>
-        <Text st={st} path="saves.slot" label="Slot name" description="'autosave' is the one Argosy and the web player use" />
+        <Text
+          st={st}
+          path="saves.slot"
+          label="Slot name"
+          description="What this device's saves are called on RomM. The newest save in any slot is still pulled, whoever made it"
+        />
+        <Choice
+          st={st}
+          path="saves.format"
+          label="Save format on RomM"
+          description="Automatic follows the server like Argosy does: a zip of the game's save folders, or the card image on RomM 5.5 and newer"
+          options={[
+            { value: "auto", label: "Automatic" },
+            { value: "folders", label: "Save folders (zip)" },
+            { value: "card", label: "Card image (.ps2)" },
+          ]}
+        />
       </PanelSection>
 
       <PanelSection title="PlayStation 2 memory card">
@@ -342,6 +358,10 @@ function AboutScreen({ nav }: { nav: Nav }) {
             {d.helper_tried.length ? <Muted>{d.helper_tried.join(" · ")}</Muted> : null}
             <Info label="Device">{`${d.host.machine} · ${d.host.kernel}`}</Info>
             <Info label="Running as">{d.host.user || "–"}</Info>
+            <Info label="RomM server">{d.saves.server_version || "not asked yet"}</Info>
+            <Info label="Saves go to RomM as">
+              {d.saves.using === "folders" ? "a zip of the game's save folders" : "a memory card image"} · slot {d.saves.slot}
+            </Info>
             <Info label="Emulator data">{d.emulator.data_dir}</Info>
             <Info label="Settings">{d.paths.settings}</Info>
             <Info label="Backups">{d.paths.backups}</Info>

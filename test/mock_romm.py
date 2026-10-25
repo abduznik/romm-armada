@@ -61,6 +61,19 @@ def compare_save_state(client_hash, client_updated_at, server_hash, server_updat
     return "no_op", "Saves appear identical"
 
 
+def romm_hash(data: bytes) -> str:
+    """The content_hash RomM gives a save (handler/filesystem/assets_handler.py, hash_save_content): by entries for a zip,
+    by bytes otherwise. Written out here on its own so the tests check the plugin against RomM's rule, not against itself."""
+    import io
+    import zipfile
+    bio = io.BytesIO(data)
+    if zipfile.is_zipfile(bio):
+        with zipfile.ZipFile(bio) as zf:
+            lines = [f"{name}:{hashlib.md5(zf.read(name)).hexdigest()}" for name in sorted(zf.namelist()) if not name.endswith("/")]
+        return hashlib.md5("\n".join(lines).encode()).hexdigest()
+    return hashlib.md5(data).hexdigest()
+
+
 class Fail(Exception):
     def __init__(self, status, detail=""):
         self.status, self.detail = status, detail
@@ -90,6 +103,7 @@ class MockRomm:
         self.fail_downloads = 0                       # next N file requests answer 503
         self.drop_after: int | None = None            # cut the next file response after this many bytes
         self.ignore_range = False
+        self.snapshots: bool | None = None            # RomM 5.5+ puts SAVE_SYNC.SNAPSHOTS in the heartbeat; 5.0 to 5.4 have no such key
         self.userpass = ("tester", "secret")
         self.clock_offset = timedelta(0)
         self.httpd: ThreadingHTTPServer | None = None
@@ -189,7 +203,7 @@ class MockRomm:
     def seed_save(self, rom_id, data: bytes, slot="autosave", emulator="armsx2_refresh", age=timedelta(0), file_name="game.ps2"):
         """A save already on the server, put there by 'another device'."""
         s = {"id": self._id(), "rom_id": rom_id, "file_name": file_name, "emulator": emulator, "slot": slot,
-             "content_hash": hashlib.md5(data).hexdigest(), "data": data, "updated_at": self.now() - age,
+             "content_hash": romm_hash(data), "data": data, "updated_at": self.now() - age,
              "origin_device_id": "other-device", "file_size_bytes": len(data)}
         self.saves.append(s)
         return s
@@ -282,8 +296,11 @@ class MockRomm:
         if path.startswith("/assets/") and path in self.assets:
             return 200, {"Content-Type": "image/webp"}, self.assets[path]
         if path == "/api/heartbeat":
-            return self.j({"SYSTEM": {"VERSION": self.version}, "FRONTEND": {"DISABLE_USERPASS_LOGIN": False},
-                           "DEVICE_INSTALL": {"ENABLED": True}})
+            hb = {"SYSTEM": {"VERSION": self.version}, "FRONTEND": {"DISABLE_USERPASS_LOGIN": False},
+                  "DEVICE_INSTALL": {"ENABLED": True}}
+            if self.snapshots is not None:
+                hb["SAVE_SYNC"] = {"SNAPSHOTS": self.snapshots}
+            return self.j(hb)
         if path == "/api/client-tokens/exchange" and method == "POST":
             now = time.time()
             self.pair_attempts = [t for t in self.pair_attempts if now - t < 60]
@@ -535,7 +552,7 @@ class MockRomm:
                 data = rest[:-2] if rest.endswith(b"\r\n") else rest
         if data is None:
             raise Fail(422, "saveFile missing")
-        digest = hashlib.md5(data).hexdigest()
+        digest = romm_hash(data)
         slot_saves = sorted([s for s in self.saves if s["rom_id"] == rom_id and s["slot"] == slot],
                             key=lambda s: s["updated_at"], reverse=True) if slot else []
         if device_id and slot and not overwrite and slot_saves:

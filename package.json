@@ -1,6 +1,6 @@
 {
   "name": "romm-armada",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "RomM for Decky: download games to a dedicated folder and sync saves with argosy-sigil. Arm64 first.",
   "type": "module",
   "scripts": {

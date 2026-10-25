@@ -17,7 +17,7 @@ class SettingsTests(Env):
     def test_defaults_and_persistence(self):
         s = self.settings
         self.assertEqual(s.get("saves.card_type"), "folder")          # folder cards are the default
-        self.assertEqual(s.get("saves.slot"), "autosave")
+        self.assertEqual(s.get("saves.slot"), "armadaos")
         self.assertEqual(s.get("library.folder_style"), "esde")
         s.update({"saves": {"slot": "mine"}, "library": {"max_concurrent": 2}})
         from rommarmada.config import Settings
@@ -37,7 +37,7 @@ class SettingsTests(Env):
         changed, errors = self.settings.update({"saves": {"slot": "ok"}, "library": {"max_concurrent": 9}})
         self.assertEqual(changed, {})
         self.assertIn("library.max_concurrent", errors)
-        self.assertEqual(self.settings.get("saves.slot"), "autosave")   # the valid half was not applied either
+        self.assertEqual(self.settings.get("saves.slot"), "armadaos")   # the valid half was not applied either
         _, errors = self.settings.update({"nope": {"x": 1}})
         self.assertIn("nope", errors)
 
