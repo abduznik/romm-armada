@@ -29,9 +29,10 @@ to find: [save formats](docs/save-formats.md), [RomM API behaviour by version](d
 
 ## Install
 
-The repository holds the source; the zip Decky installs is built from it (see [Build and test](#build-and-test)).
-Then, on the handheld: Decky menu → Settings → Developer → *Install Plugin from Zip* → pick
-`RomM-Armada-<version>.zip`, and open the plugin from the Quick Access Menu.
+Download `RomM-Armada-0.3.2.zip` from the [latest release](https://github.com/abduznik/romm-armada/releases/latest)
+(its sha256 is in the release notes), or build the zip yourself from this source (see [Build and test](#build-and-test)).
+Then, on the handheld: Decky menu → Settings → Developer → *Install Plugin from Zip* → pick the zip, and open the plugin
+from the Quick Access Menu.
 
 `scripts/send-to-armada.sh` copies the zip to a handheld over SSH and checks it arrived whole.
 
