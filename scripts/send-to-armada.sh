@@ -6,21 +6,24 @@
 #   scripts/send-to-armada.sh --check      only say whether the handheld answers (copies nothing)
 #   scripts/send-to-armada.sh some.zip     send a particular file
 #
-# HOST (default armada@armada.local) and KEY (default ~/.ssh/id_ed25519, the key
-# made for this, no passphrase) can be overridden in the environment.
+# ARMADA_HOST is the handheld's SSH address (required), for example armada@armada.local or armada@<its Tailscale address>.
+# ARMADA_KEY is a private key file to use for it (optional; without it ssh uses its own defaults and your agent).
+# Needs key-based login with no passphrase prompt, since it runs unattended (ssh -o BatchMode=yes).
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HOST=${HOST:-armada@armada.local}
-KEY=${KEY:-$HOME/.ssh/id_ed25519}
-SSH_OPTS=(-i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5)
+HOST=${ARMADA_HOST:-}
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5)
+if [ -n "${ARMADA_KEY:-}" ]; then
+    SSH_OPTS+=(-i "$ARMADA_KEY" -o IdentitiesOnly=yes)
+fi
 
 mode=send
 zip=""
 for arg in "$@"; do
     case "$arg" in
         --check) mode=check ;;
-        -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) zip=$arg ;;
     esac
 done
@@ -32,6 +35,11 @@ if [ "$mode" = send ]; then
     [ -n "$zip" ] && [ -f "$zip" ] || { echo "No RomM-Armada-*.zip to send. Build one with scripts/package.sh." >&2; exit 2; }
 fi
 
+if [ -z "$HOST" ]; then
+    echo "Set ARMADA_HOST to the handheld's SSH address, for example:" >&2
+    echo "  ARMADA_HOST=armada@armada.local $0 $*" >&2
+    exit 2
+fi
 if ! ssh "${SSH_OPTS[@]}" "$HOST" true 2> /dev/null; then
     echo "The handheld does not answer at $HOST." >&2
     echo "Check that it is on and signed in to Tailscale (tailscale status), then run this again." >&2

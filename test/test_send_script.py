@@ -53,7 +53,7 @@ class SendScriptTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def run_script(self, *args, **env):
-        e = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_REMOTE_HOME": str(self.remote), **env}
+        e = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_REMOTE_HOME": str(self.remote), "ARMADA_HOST": "armada@test", **env}
         return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=60)
 
     def test_sends_and_proves_it_arrived(self):
@@ -88,10 +88,24 @@ class SendScriptTests(unittest.TestCase):
         self.assertIn("does not match", p.stderr)
 
     def test_nothing_to_send(self):
-        e = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_REMOTE_HOME": str(self.remote)}
+        e = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_REMOTE_HOME": str(self.remote), "ARMADA_HOST": "armada@test"}
         p = subprocess.run(["bash", str(SCRIPT), str(self.tmp / "nope.zip")], capture_output=True, text=True, env=e, timeout=30)
         self.assertEqual(p.returncode, 2)
         self.assertIn("scripts/package.sh", p.stderr)
+
+    def test_without_a_host_it_says_what_to_set_and_sends_nothing(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("ARMADA_HOST", "ARMADA_KEY")}
+        e.update(PATH=f"{self.bin}:{os.environ['PATH']}", FAKE_REMOTE_HOME=str(self.remote))
+        p = subprocess.run(["bash", str(SCRIPT), str(self.zip)], capture_output=True, text=True, env=e, timeout=30)
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("ARMADA_HOST", p.stderr)
+        self.assertFalse((self.remote / "Downloads").exists())
+
+    def test_a_key_file_is_passed_on_when_given(self):
+        key = self.tmp / "key"
+        key.write_text("not a real key")
+        p = self.run_script(str(self.zip), ARMADA_KEY=str(key))
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
 
     def test_a_file_name_with_spaces_or_quotes_is_not_a_problem(self):
         odd = self.tmp / "RomM Armada 0.1 test.zip"
