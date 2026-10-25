@@ -1,0 +1,5 @@
+# The argosy-sigil revision the helper is built from. Bump all three together; build.sh checks them.
+repo=https://github.com/rommapp/argosy-sigil
+sigil=5d4ddb41cc22cc017e32cccf4ca08dea270cbe40
+libchdr=7891cbee2e8d7967bf8b6c24f091d2c5a53d8cfc
+tiny-AES-c=23856752fbd139da0b8ca6e471a13d5bcc99a08d

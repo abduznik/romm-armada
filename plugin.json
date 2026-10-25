@@ -1,0 +1,11 @@
+{
+  "name": "RomM Armada",
+  "author": "abduznik",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["emulation", "romm", "saves", "arm64"],
+    "description": "Download your RomM library to this handheld and keep its saves in sync, Arm64 first.",
+    "image": ""
+  }
+}

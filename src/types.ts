@@ -1,0 +1,111 @@
+// The shapes the Python side sends. Kept by hand next to py_modules/rommarmada/service.py.
+
+export type Failure = { ok: false; error: string; message: string; errors?: Record<string, string> };
+export type Success<T = object> = { ok: true } & T;
+export type Result<T = object> = Success<T> | Failure;
+
+export type Settings = {
+  server: { url: string; verify_tls: boolean };
+  auth: { device_id: string; device_name: string; username: string; method: string; signed_in: boolean };
+  library: {
+    root: string; folder_style: "esde" | "romm"; platform_dirs: Record<string, string>; include_extras: boolean;
+    verify: "crc" | "size" | "none"; max_concurrent: number; speed_limit_kbs: number; min_free_mb: number;
+    extract_zip: boolean; resume_on_start: boolean; remote_installs: boolean;
+  };
+  saves: {
+    enabled: boolean; slot: string; push_on_exit: boolean; pull_on_startup: boolean; pull_when_idle: boolean;
+    pull_interval_min: number; conflict: "ask" | "server" | "device" | "newest"; card_type: "folder" | "auto";
+    backups: boolean; backup_keep: number; autocleanup: boolean; autocleanup_limit: number; playtime: boolean;
+    notify: boolean;
+  };
+  emulators: { ps2: { emulator: "auto" | "armsx2" | "pcsx2"; data_dir: string; executable: string } };
+  advanced: { request_timeout: number; debug: boolean };
+};
+
+export type CardInfo = {
+  slot1: { name: string; kind: "folder" | "file" | "missing" | "other"; enabled: boolean };
+  wanted: "folder" | "auto";
+  custom_dir: boolean;
+};
+
+export type EmulatorInfo = {
+  name: string; id: string; data_dir: string; data_dir_exists: boolean; found_by: string; executable: string;
+  running: boolean; card: CardInfo;
+};
+
+export type Conflict = {
+  rom_id: number; name: string; reason: "first_contact" | "both_changed" | "server_moved" | string; detail: string;
+  local: { updated_at: string | null; hash: string; has_saves: boolean };
+  server: { save_id: number | null; updated_at: string | null; hash: string | null; device: string };
+  at: string;
+};
+
+export type Overview = {
+  version: string;
+  signed_in: boolean;
+  server: { url: string; username: string; method: string; verify_tls: boolean };
+  device: { id: string; name: string };
+  library: { root: string; free: number; total: number; installed: number; installed_size: number };
+  downloads: { active: number; total: number; failed: number };
+  emulator: EmulatorInfo;
+  saves: { enabled: boolean; conflicts: Conflict[]; card_type: string };
+  helper: { ok: boolean; arch?: string; helper?: string; sigil?: string; error?: string };
+};
+
+export type Platform = {
+  id: number; name: string; slug: string; fs_slug: string; rom_count: number; folder: string; installed: number;
+  saves: boolean;
+};
+
+export type DownloadState = "queued" | "running" | "paused" | "verifying" | "done" | "error" | "cancelled";
+
+export type DownloadJob = {
+  rom_id: number; name: string; platform: string; platform_slug: string; state: DownloadState; error: string;
+  error_kind: string; total: number; done: number; speed: number; eta: number; files: number; created: string;
+  finished: string;
+};
+
+export type RomSummary = {
+  id: number; name: string; fs_name: string; size: number; platform_id: number; platform_slug: string;
+  regions: string[]; cover: string; installed: boolean; download: DownloadJob | null;
+};
+
+export type SyncResult = {
+  rom_id: number; name: string; message: string; reason?: string; conflict?: Conflict; trigger?: string; notify?: boolean;
+  status: "uploaded" | "downloaded" | "up_to_date" | "no_saves" | "conflict" | "busy" | "blocked" | "error" | "offline" |
+    "auth" | "unsupported" | "disabled" | "paused" | "not_installed";
+};
+
+export type SyncStatus = {
+  rom_id: number; supported: boolean; enabled?: boolean; emulator?: string; data_dir?: string; data_dir_exists?: boolean;
+  last?: { at: string; action: string } | null; conflict?: Conflict | null;
+  history?: { at: string; action: string; detail: string }[];
+  backups?: { name: string; path: string; size: number }[];
+  slots?: { slot: number; enabled: boolean; name: string; kind: string }[];
+};
+
+export type RomDetail = {
+  id: number; name: string; fs_name: string; platform: string; platform_slug: string; summary: string; size: number;
+  regions: string[]; languages: string[]; genres: string[]; companies: string[];
+  files: { name: string; size: number; category: string }[]; cover: string; installed: boolean;
+  local: { main_file: string | null; path: string | null; size: number; installed_at: string } | null;
+  download: DownloadJob | null; offline: string; saves: SyncStatus; saves_supported: boolean;
+};
+
+export type Volume = { path: string; name: string; total: number; free: number };
+
+export type ProbeInfo = {
+  url: string; version: string; supports_pairing: boolean; password_login: boolean; device_install: boolean;
+};
+
+export type DeviceFlow = { active: boolean; user_code?: string; verify_url?: string; seconds_left?: number };
+
+export type Diagnostics = {
+  version: string;
+  helper: { ok: boolean; arch?: string; helper?: string; sigil?: string; error?: string };
+  helper_tried: string[];
+  host: { machine: string; kernel: string; user: string; home: string };
+  paths: Record<string, string>;
+  emulator: { name: string; data_dir: string; ini: string; ini_exists: boolean; executable: string; found_by: string };
+  library_free: string;
+};

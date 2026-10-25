@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+bin/
+*.zip
+__pycache__/
+*.pyc
+.pytest_cache/
+*.part
