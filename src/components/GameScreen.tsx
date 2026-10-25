@@ -200,6 +200,23 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
             </PanelSectionRow>
           ) : null}
           <Info label="Last sync">{saves.last ? ago(saves.last.at) : "never"}</Info>
+          {saves.last?.unit && saves.last.unit.size > 0 ? (
+            <>
+              <Info label="RomM keeps">
+                {`${bytes(saves.last.unit.size)} card image: ${
+                  saves.last.unit.contents.length
+                    ? `${saves.last.unit.contents.join(", ")}, ${bytes(saves.last.unit.bytes)} of save data`
+                    : "no saves"
+                }`}
+              </Info>
+              <PanelSectionRow>
+                <Muted>
+                  RomM stores a game's save as a standard memory card image, the format Argosy and every PS2 emulator reads. It
+                  holds only this game's save. The card on this device stays a folder card.
+                </Muted>
+              </PanelSectionRow>
+            </>
+          ) : null}
           {saves.emulator ? <Info label="Emulator">{saves.emulator}</Info> : null}
           {saves.slots && saves.slots[0] ? (
             <Info label="Memory card">{`${saves.slots[0].name} (${saves.slots[0].kind})`}</Info>

@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PAIR_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 ALL_SCOPES = ["me.read", "me.write", "roms.read", "platforms.read", "assets.read", "assets.write",
-              "devices.read", "devices.write", "roms.user.read", "roms.user.write"]
+              "devices.read", "devices.write", "roms.user.read", "roms.user.write", "firmware.read"]
 
 
 def utc(dt: datetime | None = None) -> datetime:
@@ -73,6 +73,7 @@ class MockRomm:
         self.platforms: dict[int, dict] = {}
         self.roms: dict[int, dict] = {}
         self.file_data: dict[int, bytes] = {}
+        self.firmware: dict[int, dict] = {}        # RomM's BIOS files: id -> record (+ 'data')
         self.next_id = 100
         self.tokens: dict[str, list[str]] = {}
         self.pair_codes: dict[str, dict] = {}
@@ -164,6 +165,19 @@ class MockRomm:
         }
         p["rom_count"] += 1
         return rid
+
+    def add_firmware(self, platform_id: int, file_name: str, data: bytes, verified=True, missing=False) -> int:
+        """A BIOS file in RomM's firmware list for a platform (FirmwareSchema in endpoints/responses/firmware.py)."""
+        fid = self._id()
+        p = self.platforms[platform_id]
+        self.firmware[fid] = {
+            "id": fid, "platform_id": platform_id, "file_name": file_name, "file_name_no_tags": file_name,
+            "file_name_no_ext": file_name.rsplit(".", 1)[0], "file_extension": file_name.rsplit(".", 1)[-1],
+            "file_path": f"bios/{p['fs_slug']}", "file_size_bytes": len(data), "full_path": f"bios/{p['fs_slug']}/{file_name}",
+            "is_verified": verified, "crc_hash": format(zlib.crc32(data) & 0xFFFFFFFF, "08x"),
+            "md5_hash": hashlib.md5(data).hexdigest(), "sha1_hash": hashlib.sha1(data).hexdigest(),
+            "missing_from_fs": missing, "created_at": iso(self.now()), "updated_at": iso(self.now()), "data": data}
+        return fid
 
     def _id(self) -> int:
         self.next_id += 1
@@ -359,6 +373,17 @@ class MockRomm:
         if m and method == "GET":
             self.auth(h, "roms.read")
             return self.send_file(h, int(m.group(1)))
+        # --- firmware (BIOS files)
+        if path == "/api/firmware" and method == "GET":
+            self.auth(h, "firmware.read")
+            pid = g("platform_id")
+            return self.j([{k: v for k, v in f.items() if k != "data"} for f in self.firmware.values()
+                           if pid is None or f["platform_id"] == int(pid)])
+        m = re.fullmatch(r"/api/firmware/(\d+)/content/(.+)", path)
+        if m and method == "GET":
+            self.auth(h, "firmware.read")
+            fw = self.firmware.get(int(m.group(1))) or self._404("Firmware")
+            return self.send_blob(h, fw["data"])
         # --- saves
         if path == "/api/saves" and method == "GET":
             self.auth(h, "assets.read")
@@ -427,6 +452,9 @@ class MockRomm:
         data = self.file_data.get(file_id)
         if data is None:
             raise Fail(404, "File not found")
+        return self.send_blob(h, data)
+
+    def send_blob(self, h, data: bytes):
         if self.fail_downloads > 0:
             self.fail_downloads -= 1
             raise Fail(503, "Try later")

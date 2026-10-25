@@ -259,6 +259,45 @@ def sigil_options(cfg: CardConfig) -> dict[str, str]:
     return opts
 
 
+# --- the BIOS folder ------------------------------------------------------------------------------------
+
+BIOS_MIN_BYTES = 4 * 1024 * 1024      # the emulator only considers files from 4 to 8 MiB (pcsx2/ps2/BiosTools.cpp)
+BIOS_MAX_BYTES = 8 * 1024 * 1024
+BIOS_EXTRAS = (".rom1", ".rom2", ".erom", ".nvm", ".mec")      # optional parts that sit beside a BIOS image
+
+
+def bios_dir(data_dir: Path) -> Path:
+    """Where the emulator looks for BIOS images: [Folders] Bios of PCSX2.ini, `bios` under the data folder by default."""
+    raw = read_ini(Path(data_dir) / "inis" / "PCSX2.ini").get("Folders", {}).get("Bios", "bios") or "bios"
+    return Path(raw) if os.path.isabs(raw) else Path(data_dir) / raw
+
+
+def list_bios(directory: Path) -> list[dict]:
+    """What is in the BIOS folder. kind: bios (the right size for a BIOS image; the emulator checks the rest), extra, other."""
+    out: list[dict] = []
+    try:
+        entries = sorted(Path(directory).iterdir())
+    except OSError:
+        return out
+    for p in entries:
+        if p.name.startswith("."):      # our own half-finished downloads, the file manager's leftovers
+            continue
+        try:
+            if not p.is_file():
+                continue
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if p.name.lower().endswith(BIOS_EXTRAS):
+            kind = "extra"
+        elif BIOS_MIN_BYTES <= size <= BIOS_MAX_BYTES:
+            kind = "bios"
+        else:
+            kind = "other"
+        out.append({"name": p.name, "size": size, "kind": kind})
+    return out
+
+
 # --- running programs ------------------------------------------------------------------------------
 
 

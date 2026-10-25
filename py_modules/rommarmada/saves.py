@@ -322,6 +322,20 @@ class SaveSync:
         got["mtime"] = local_mtime(ctx.cfg, ident.get("save_id", ""))
         return got
 
+    def _unit_info(self, path: Path) -> dict:
+        """What a unit is: its size and the game saves inside it. RomM keeps each game's save as a whole 8 MB memory card
+        image (sigil's format, which Argosy and every PCSX2-family emulator reads), and this says what is in that image."""
+        info: dict = {"size": 0, "contents": [], "bytes": 0}
+        try:
+            info["size"] = Path(path).stat().st_size
+            listing = self.bridge.card_list(str(path))
+            entries = listing.get("entries") or []
+            info["contents"] = [str(e.get("name", "")) for e in entries]
+            info["bytes"] = sum(int(e.get("blocks", 0)) for e in entries) * 1024      # a card block is a 1 KiB cluster
+        except (OSError, SavebridgeError, SigilRefusal) as e:
+            log.debug("could not list %s: %s", path, e)
+        return info
+
     def _client_state(self, ctx: Ctx, game: dict, local: dict) -> dict:
         size = Path(local["unit_path"]).stat().st_size if local.get("unit_path") else 0
         return {"rom_id": game["rom_id"], "file_name": local["artifact"], "slot": self.settings.get("saves.slot"),
@@ -512,7 +526,8 @@ class SaveSync:
             rec.doc["conflict"] = None
             if has_local and (rec.last is None or rec.last.get("local_hash") != local["content_hash"]):
                 rec.doc["last"] = {"at": iso(), "action": "match", "local_hash": local["content_hash"],
-                                   "server_hash": server_hash or local["content_hash"], "server_save_id": (op or {}).get("save_id")}
+                                   "server_hash": server_hash or local["content_hash"], "server_save_id": (op or {}).get("save_id"),
+                                   "unit": self._unit_info(Path(local["unit_path"])) if local.get("unit_path") else None}
                 rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
             return result(rid, name, "up_to_date" if has_local or has_server else "no_saves",
                           "Already in sync" if has_local or has_server else "No saves yet, here or on RomM")
@@ -551,7 +566,8 @@ class SaveSync:
         if use_slot == s.get("saves.slot"):
             rec.doc["last"] = {"at": iso(), "action": "upload", "local_hash": local["content_hash"],
                                "server_hash": saved.get("content_hash") or local["content_hash"],
-                               "server_save_id": saved.get("id"), "identity_hash": local.get("identity_hash")}
+                               "server_save_id": saved.get("id"), "identity_hash": local.get("identity_hash"),
+                               "unit": self._unit_info(Path(local["unit_path"]))}
             rec.doc["conflict"] = None
             rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
         rec.note("upload", f"{len(data)} bytes to slot {use_slot}")
@@ -594,7 +610,7 @@ class SaveSync:
             log.debug("could not confirm the download: %s", e)
         rec.doc["last"] = {"at": iso(), "action": "download", "local_hash": baseline,
                            "server_hash": got.get("content_hash"), "server_save_id": save_id,
-                           "identity_hash": got.get("identity_hash")}
+                           "identity_hash": got.get("identity_hash"), "unit": self._unit_info(unit)}
         rec.doc["conflict"] = None
         rec.note("download", f"{len(data)} bytes from save {save_id}")
         return result(rid, name, "downloaded", "Restored RomM's save onto this device", save_id=save_id)

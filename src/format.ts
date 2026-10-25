@@ -53,3 +53,15 @@ export function formatPairCode(text: string): string {
 export function pairCodeReady(text: string): boolean {
   return text.replace(/[^A-Za-z0-9]/g, "").length === 8;
 }
+
+/** What each RomM permission is for, so a missing one is explained by what stops working. */
+const SCOPE_USE: Record<string, string> = {
+  "platforms.read": "browsing the library", "roms.read": "browsing and downloading games",
+  "assets.read": "downloading saves", "assets.write": "uploading saves", "firmware.read": "downloading BIOS files",
+  "devices.write": "registering this device", "devices.read": "registering this device",
+  "roms.user.write": "play time", "roms.user.read": "play time",
+};
+
+export function describeScopes(missing: string[]): string {
+  return missing.map((s) => (SCOPE_USE[s] ? `${s} (${SCOPE_USE[s]})` : s)).join(", ");
+}

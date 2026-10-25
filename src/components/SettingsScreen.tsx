@@ -269,6 +269,15 @@ function EmulatorSettings({ nav }: { nav: Nav }) {
         ) : null}
         <Text st={st} path="emulators.ps2.data_dir" label="Data folder" placeholder="empty = detect (~/.config/ARMSX2)" description="Only if you moved it, or started the emulator with -datapath" />
         <Text st={st} path="emulators.ps2.executable" label="Program" placeholder="empty = detect" />
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => nav.push({ name: "bios" })}
+            description={em ? (em.bios.has_bios ? `${em.bios.count} in ${em.bios.dir}` : `none in ${em.bios.dir}`) : undefined}
+          >
+            BIOS files
+          </ButtonItem>
+        </PanelSectionRow>
       </PanelSection>
     </>
   );

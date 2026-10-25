@@ -331,6 +331,33 @@ class RpcTests(SvcBase):
                 await p._unload()
         asyncio.run(go())
 
+    def test_the_panel_can_look_at_and_install_bios_files(self):
+        data = (b"\x42" * 1024) * 4096                  # 4 MiB, the size of a PS2 BIOS
+        fid = self.mock.add_firmware(self.pid, "scph70012.bin", data)
+
+        async def go():
+            p = self.main.Plugin()
+            await p._main()
+            try:
+                near = await p.bios_status(False)
+                self.assertEqual((near["ok"], near["remote"], near["has_bios"]), (True, None, False))
+                st = await p.bios_status()
+                self.assertEqual([i["name"] for i in st["remote"]["items"]], ["scph70012.bin"])
+                self.assertEqual((await p.overview())["emulator"]["bios"]["has_bios"], False)
+                done = await p.bios_install([str(fid)])            # ids arrive as the UI sends them
+                self.assertTrue(done["ok"], done)
+                self.assertEqual(done["report"]["installed"], ["scph70012.bin"])
+                self.assertEqual((await p.overview())["emulator"]["bios"]["has_bios"], True)
+                again = await p.bios_install()
+                self.assertTrue(again["ok"])
+                self.assertEqual(again["report"]["installed"], [])
+                self.mock.tokens.clear()
+                refused = await p.bios_status()
+                self.assertFalse(refused["remote"]["ok"])
+            finally:
+                await p._unload()
+        asyncio.run(go())
+
     def test_events_reach_decky(self):
         async def go():
             p = self.main.Plugin()

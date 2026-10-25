@@ -27,7 +27,8 @@ const overview = (over: any = {}) => ({
   downloads: { active: 0, total: 0, failed: 0 },
   emulator: { name: "ARMSX2", id: "armsx2", data_dir: "/home/armada/.config/ARMSX2", data_dir_exists: true, found_by: "found",
     executable: "/home/armada/Applications/ARMSX2.AppImage", running: false,
-    card: { slot1: { name: "Mcd001.ps2", kind: "folder", enabled: true }, wanted: "folder", custom_dir: false } },
+    card: { slot1: { name: "Mcd001.ps2", kind: "folder", enabled: true }, wanted: "folder", custom_dir: false },
+    bios: { dir: "/home/armada/.config/ARMSX2/bios", has_bios: true, count: 1 } },
   saves: { enabled: true, conflicts: [], card_type: "folder" },
   helper: { ok: true, arch: "aarch64", helper: "0.1.0", sigil: "5d4ddb41cc22" },
   ...over,
@@ -45,6 +46,22 @@ const detail = (over: any = {}) => ({
   files: [{ name: "Test Game (USA).iso", size: 4_000_000_000, category: "game" }], cover: "", installed: false, local: null,
   download: null, offline: "", saves: { rom_id: 101, supported: true }, saves_supported: true, ...over,
 });
+
+const biosItem = (over: any = {}) => ({
+  id: 1, name: "scph70012.bin", size: 4194304, verified: true, md5: "aa", held_as: "scph70012.bin", state: "missing", ...over,
+});
+
+const biosStatus = (over: any = {}) => ({
+  ok: true, emulator: { name: "ARMSX2", id: "armsx2", running: false },
+  dir: "/home/armada/.config/ARMSX2/bios", dir_exists: false, local: [], has_bios: false,
+  remote: {
+    ok: true, platform: { id: 1, name: "PlayStation 2" }, reason: "", message: "",
+    items: [biosItem(), biosItem({ id: 2, name: "scph39001.bin", verified: false })],
+  },
+  ...over,
+});
+
+const noBios = () => overview({ emulator: { ...overview().emulator, bios: { dir: "/home/armada/.config/ARMSX2/bios", has_bios: false, count: 0 } } });
 
 function backendWith(over: Record<string, (...a: any[]) => any> = {}) {
   let settings: any = settingsDoc();
@@ -80,7 +97,7 @@ describe("the panel", () => {
     reset();
     clearModals();
     downloads.set({});
-    alerts.set({ authRequired: false, conflicts: {}, emulatorRunning: false });
+    alerts.set({ authRequired: false, conflicts: {}, emulatorRunning: false, missingScopes: [] });
   });
 
   test("connecting with a pairing code: formatted as typed, checked, sent, then the home screen", async () => {
@@ -170,6 +187,11 @@ describe("the panel", () => {
     await type(h, "Client token", "rmm_abc");
     await click(h, "Use this token");
     assert.deepEqual(backend.calls.find((c) => c.method === "connect_token")!.args, ["http://romm.local:8080", "rmm_abc", true]);
+    assert.match(text(h), /Browse the library/, "the token works, so the user is let in");
+    assert.match(text(h), /lacks assets\.write \(uploading saves\)/, "and told what will not work");
+    assert.match(text(h), /allow all of them/);
+    await click(h, "Pair again");
+    assert.match(text(h), /Pair with a code/);
     await h.unmount();
   });
 
@@ -330,6 +352,165 @@ describe("the panel", () => {
     fire("auth_required");
     assert.equal(toaster.toasts.filter((t) => t.title === "RomM sign-in needed").length, 1, "asked once, not per request");
     stop();
+  });
+
+  test("without a BIOS the home screen says so, and the BIOS screen installs what RomM has", async () => {
+    let state = biosStatus();
+    backendWith({
+      overview: () => (state.has_bios ? overview() : noBios()),
+      bios_status: () => state,
+      bios_install: (ids: number[] | null, overwrite: boolean) => {
+        state = biosStatus({
+          dir_exists: true, has_bios: true,
+          local: [{ name: "scph70012.bin", size: 4194304, kind: "bios" }, { name: "scph39001.bin", size: 4194304, kind: "bios" }],
+          remote: { ...state.remote, items: state.remote.items.map((i: any) => ({ ...i, state: "installed" })) },
+        });
+        return { ok: true, message: "Installed 2 files in /home/armada/.config/ARMSX2/bios.", report: { installed: ["scph70012.bin", "scph39001.bin"], skipped: [], conflicts: [], busy: [], failed: [] }, status: state };
+      },
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    assert.match(text(h), /ARMSX2 has no BIOS yet, and cannot start a game without one/);
+    await click(h, "Get the BIOS from RomM");
+    assert.match(text(h), /\/home\/armada\/\.config\/ARMSX2\/bios/);
+    assert.match(text(h), /The folder does not exist yet/);
+    assert.match(text(h), /From RomM \(PlayStation 2\)/);
+    assert.match(text(h), /scph70012\.bin/);
+    assert.match(text(h), /4\.0 MB · verified by RomM · not in the folder/);
+    assert.match(text(h), /scph39001\.bin/);
+    await click(h, "Install 2 missing files");
+    assert.deepEqual(backend.calls.find((c) => c.method === "bios_install")!.args, [null, false]);
+    assert.match(text(h), /Installed 2 files in \/home\/armada\/\.config\/ARMSX2\/bios\./);
+    assert.equal(findButton(h, "Everything from RomM is in the folder").disabled, true);
+    assert.equal(findButton(h, "✓ scph70012.bin").disabled, true, "a file that is there cannot be fetched again");
+    assert.doesNotMatch(text(h), /cannot start a game without a BIOS image/);
+    await click(h, "Back");
+    assert.doesNotMatch(text(h), /has no BIOS yet/, "the home screen follows");
+    await h.unmount();
+  });
+
+  test("one file by itself, and a file that would replace the player's own asks first", async () => {
+    const calls: any[] = [];
+    backendWith({
+      overview: () => noBios(),
+      bios_status: () => biosStatus({
+        dir_exists: true, local: [{ name: "scph39001.bin", size: 4194304, kind: "bios" }], has_bios: true,
+        remote: {
+          ok: true, platform: { id: 1, name: "PlayStation 2" }, reason: "", message: "",
+          items: [biosItem(), biosItem({ id: 2, name: "scph39001.bin", state: "different" }), biosItem({ id: 3, name: "scph10000.bin", state: "present", held_as: "mine.bin" })],
+        },
+      }),
+      bios_install: (ids: number[], overwrite: boolean) => (calls.push([ids, overwrite]), { ok: true, message: "Installed 1 file in /x.", report: { installed: ["x"], skipped: [], conflicts: [], busy: [], failed: [] } }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Get the BIOS from RomM");
+    assert.match(text(h), /in the folder under another name \(mine\.bin\)/);
+    assert.match(text(h), /a different file has this name/);
+    assert.equal(findButton(h, "scph10000.bin").disabled, true);
+    await click(h, "Install 1 missing file");
+    assert.deepEqual(calls.pop(), [null, false]);
+    await click(h, /^scph70012\.bin/);
+    assert.deepEqual(calls.pop(), [[1], false]);
+    await click(h, /^scph39001\.bin/);
+    assert.equal(modals.length, 1, "it asks before replacing a file the player put there");
+    assert.equal(calls.length, 0);
+    assert.match(String((modals[0].props as any).strDescription), /copied to the plugin's backups first/);
+    await act(async () => (modals[0].props as any).onOK());
+    await settle(3);
+    assert.deepEqual(calls.pop(), [[2], true]);
+    await h.unmount();
+  });
+
+  test("a sign-in without firmware access is explained and can be fixed by pairing again", async () => {
+    backendWith({
+      overview: () => noBios(),
+      bios_status: () => biosStatus({
+        remote: { ok: false, platform: null, items: [], reason: "forbidden", message: "This device's sign-in does not include firmware access (the permission firmware.read). To fix it, pair again and allow it when RomM asks." },
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Get the BIOS from RomM");
+    assert.match(text(h), /does not include firmware access/);
+    assert.equal(buttons(h).some((b) => /Install/.test(b.textContent ?? "")), false, "nothing to install without access");
+    await click(h, "Pair again");
+    assert.match(text(h), /Pair with a code/);
+    await h.unmount();
+  });
+
+  test("RomM with no firmware says where to add it, and a running emulator is mentioned", async () => {
+    backendWith({
+      overview: () => noBios(),
+      bios_status: () => biosStatus({
+        emulator: { name: "ARMSX2", id: "armsx2", running: true }, dir_exists: true,
+        local: [{ name: "readme.txt", size: 20, kind: "other" }],
+        remote: { ok: true, platform: { id: 1, name: "PlayStation 2" }, items: [], reason: "empty", message: "RomM has no firmware for PlayStation 2. Add the BIOS in RomM (open the platform, then Firmware), or put the file in the folder below yourself." },
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Get the BIOS from RomM");
+    assert.match(text(h), /RomM has no firmware for PlayStation 2/);
+    assert.match(text(h), /readme\.txt/);
+    assert.match(text(h), /not a BIOS image/);
+    assert.match(text(h), /ARMSX2 is running\. Files can be added now, not replaced\./);
+    assert.equal(buttons(h).some((b) => /Install/.test(b.textContent ?? "")), false);
+    await h.unmount();
+  });
+
+  test("a failed install says which file and why, and keeps the list usable", async () => {
+    backendWith({
+      overview: () => noBios(),
+      bios_status: () => biosStatus(),
+      bios_install: () => ({
+        ok: false, message: "Installed 1 file in /x. scph39001.bin: The connection ended before the file was complete.",
+        report: { installed: ["scph70012.bin"], skipped: [], conflicts: [], busy: [], failed: [{ name: "scph39001.bin", error: "scph39001.bin: The connection ended before the file was complete", kind: "network" }] },
+        status: biosStatus({ remote: { ...biosStatus().remote, items: [biosItem({ state: "installed" }), biosItem({ id: 2, name: "scph39001.bin", state: "missing" })] } }),
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Get the BIOS from RomM");
+    await click(h, "Install 2 missing files");
+    assert.match(text(h), /scph39001\.bin: The connection ended before the file was complete/);
+    assert.equal(findButton(h, "Install 1 missing file").disabled, false, "and the rest can be tried again");
+    await h.unmount();
+  });
+
+  test("the BIOS files are also reachable from the emulator settings", async () => {
+    backendWith({ bios_status: () => biosStatus({ has_bios: true, dir_exists: true, local: [{ name: "scph70012.bin", size: 4194304, kind: "bios" }] }) });
+    const h = await mount(<Root />);
+    await settle(3);
+    assert.doesNotMatch(text(h), /has no BIOS yet/, "a BIOS is there, so the home screen stays quiet");
+    await click(h, "Settings");
+    await click(h, "Emulator");
+    assert.match(text(h), /1 in \/home\/armada\/\.config\/ARMSX2\/bios/);
+    await click(h, "BIOS files");
+    assert.match(text(h), /scph70012\.bin/);
+    await h.unmount();
+  });
+
+  test("the game screen says what RomM keeps for the save, so the whole card image is not a surprise", async () => {
+    backendWith({
+      rom: () => detail({
+        installed: true, local: { main_file: "/home/armada/ROMs/ps2/Test Game (USA).iso", path: "/home/armada/ROMs/ps2", size: 4e9, installed_at: "2026-10-25T09:00:00Z" },
+        saves: {
+          rom_id: 101, supported: true, enabled: true, emulator: "ARMSX2", slots: [{ slot: 1, enabled: true, name: "Mcd001.ps2", kind: "folder" }],
+          last: { at: new Date().toISOString(), action: "upload", unit: { size: 8650752, contents: ["BASLUS-20152"], bytes: 6144 } },
+        },
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Browse the library");
+    await click(h, "PlayStation 2");
+    await click(h, "Test Game (USA)");
+    assert.match(text(h), /RomM keeps/);
+    assert.match(text(h), /8\.\d MB card image: BASLUS-20152, 6\.0 KB of save data/);
+    assert.match(text(h), /holds only this game's save\. The card on this device stays a folder card/);
+    assert.match(text(h), /Memory card.*Mcd001\.ps2 \(folder\)/);
+    await h.unmount();
   });
 
   test("when RomM stops accepting the device the home screen says so and offers to pair again", async () => {

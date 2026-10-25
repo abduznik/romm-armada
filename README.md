@@ -13,12 +13,13 @@ A [Decky Loader](https://decky.xyz) plugin that connects a handheld to your [Rom
 The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Armada installs as
 `~/Applications/ARMSX2.AppImage`) or **PCSX2**. Downloading works for every platform in your library.
 
-> Status: tested on a PC against a real RomM 5.4.1 server (in podman), with the Arm64 helper run under qemu.
-> **Not yet run on a handheld** (the Retroid was offline). See [Verified and not yet verified](#verified-and-not-yet-verified).
+> Status: tested on a PC against a real RomM 5.4.1 server (in podman), with the Arm64 helper run under qemu, and tried
+> on a Retroid handheld running Armada OS (its owner reports: ARMSX2 launched, the sync settled on a folder card and a
+> save made in a game was pushed to RomM correctly). See [Verified and not yet verified](#verified-and-not-yet-verified).
 
 ## Install
 
-1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.1.0.zip`.
+1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.2.0.zip`.
 2. Open the plugin from Decky's Quick Access menu.
 
 ## Connect
@@ -26,7 +27,7 @@ The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Arm
 On the first screen enter your server address, then either:
 
 - **Pair with a code** *(recommended)*: in RomM's web page open your API tokens, make a token with all
-  permissions and choose **Pair**. RomM shows an 8-character code. Type it on the handheld within **60 seconds**
+  permissions (the plugin uses firmware read for BIOS files too) and choose **Pair**. RomM shows an 8-character code. Type it on the handheld within **60 seconds**
   (it works once). The code is formatted for you (`ABCD-EFGH`) and checked before it is sent.
 - **Show a code on the handheld** and approve it in RomM's web page while signed in there.
 - Or paste a token, or sign in with a password (used once to make a token; never stored).
@@ -48,13 +49,33 @@ Sync works per game, in RomM's `autosave` slot:
 
 PS2 saves are kept on **PCSX2 folder memory cards** (a folder per save inside `memcards/Mcd001.ps2/`), the same
 mode Argosy uses on Android. A restore writes only that game's save folders; other games' saves and the card file
-are never rewritten. The unit sent to RomM is the same either way (a per-game card), so a device using a file card
-interoperates too.
+are never rewritten.
+
+**What RomM stores.** One standard memory card image (`.ps2`, 8.3 MB like every PS2 card) per upload, holding only
+that game's save folder (a few KB of data, not the other games on your card). It is the same whether the card here is
+a folder or a file, and it is the format Argosy reads and writes, which is what lets a save made here continue on
+another device. Your card on the handheld stays a folder card. The game screen shows what is in the image. Each upload
+is a new version in the slot; *Keep only recent versions on RomM* with *Versions on RomM* (default 10) bounds how many stay.
 
 - No card yet → the plugin creates a formatted folder card.
 - A file card with no saves → replaced by a folder card (the old file is kept beside it as `.bak`).
 - A file card **with** saves is never touched: convert it in the emulator (Settings → Memory Cards → Convert), or set
   *Card type* to *Use what the emulator has*.
+
+## BIOS files
+
+A PS2 emulator cannot start a game without a BIOS. When the emulator's BIOS folder has none, the home screen says so
+and offers **Get the BIOS from RomM** (also Settings → Emulator → BIOS files). That screen lists the firmware RomM keeps
+for the PlayStation 2 platform (in RomM: the platform, then *Firmware*) beside what the folder holds.
+
+- Nothing is placed unasked: *Install N missing files*, or tap one file.
+- A file that is already there with the same content is left alone, also if you renamed it.
+- A different file with the same name is kept. Replacing it asks first and copies the old one to the plugin's backups.
+- Each download is checked against RomM's size, MD5, SHA-1 and CRC32 before it gets its final name.
+- The folder is `[Folders] Bios` in the emulator's `PCSX2.ini`, `~/.config/ARMSX2/bios` by default. ARMSX2 and PCSX2
+  pick up a BIOS in that folder by themselves.
+- It needs the *firmware read* permission. A sign-in made with plugin 0.1.0 lacks it: the screen says so, and pairing
+  again fixes it.
 
 ## Where things live
 
@@ -62,6 +83,8 @@ interoperates too.
 |---|---|
 | Games | `Settings → Games and downloads → Download location` (default `~/ROMs/<system>/`; ES-DE names like `ps2`, `psx`, `gc`) |
 | ARMSX2 data | `~/.config/ARMSX2` (or `$XDG_CONFIG_HOME/ARMSX2`); PCSX2: `~/.config/PCSX2` |
+| BIOS files | `<data folder>/bios` unless the emulator's `PCSX2.ini` says otherwise |
+| Backups of replaced BIOS files | `~/homebrew/data/romm-armada/backups/bios/` |
 | Plugin settings, per-game sync records | `~/homebrew/settings/romm-armada/` |
 | Backups of memory cards | `~/homebrew/data/romm-armada/backups/game-<id>/` |
 | Logs | `~/homebrew/logs/romm-armada/` |
@@ -97,17 +120,21 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
   the library, a real download checked against RomM's CRC32, a save uploaded to the `autosave` slot as
   `armsx2_refresh` whose RomM `content_hash` equals the MD5 sigil reported, a second device restoring it onto a
   folder card, "first contact" and "keep both" conflict handling, and play time reaching RomM. This run also caught
-  that RomM merges devices with the same hostname, so each install now registers under its own.
+  that RomM merges devices with the same hostname, so each install now registers under its own. Also against the real
+  server: firmware uploaded to a platform, listed, downloaded and checked into the BIOS folder, and its refusal of a
+  sign-in that lacks the firmware permission.
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 111 backend tests (downloads with resume and corruption, save sync, the watcher, remote installs, the Decky RPC
-  layer under a stand-in for Decky's module) and 13 rendered panel scenarios (typed pairing code, device approval,
-  browsing, downloading, conflicts, settings, disconnecting). The panel also type-checks against `@decky/ui` 4.11.
+- 152 backend tests (downloads with resume and corruption, save sync, BIOS install, the watcher, remote installs, the
+  Decky RPC layer under a stand-in for Decky's module) and 20 rendered panel scenarios (typed pairing code, device
+  approval, browsing, downloading, conflicts, BIOS files, settings, disconnecting). The panel also type-checks against
+  `@decky/ui` 4.11.
+- **On a handheld** (reported by its owner, 0.1.0 on a Retroid with Armada OS): ARMSX2 launched, the sync settled on
+  a folder card, and a save made in a game was pushed to RomM correctly.
 
 **Not verified**
 
-- Running inside Decky on an Armada handheld (where Decky itself runs under FEX), Steam's real rendering of the
-  panel, and gamepad navigation of it.
-- ARMSX2's own memory cards from a real play session (the tests build cards with sigil), and ES-DE starting a
+- The BIOS download on a handheld (0.2.0), Steam's real rendering of the new screens, and gamepad navigation of them.
+- ARMSX2's own memory cards beyond that first play session (the tests build cards with sigil), and ES-DE starting a
   downloaded game.
 - Which helper build gets picked on the handheld: Settings → About shows it (`aarch64` is expected).
 

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import emulators, library as lib, log, paths, saves as savesmod
+from . import bios, emulators, library as lib, log, paths, saves as savesmod
 from .config import Settings
 from .connect import PLUGIN_VERSION, ConnectError, Connector, romm_hostname
 from .downloads import ACTIVE, DownloadManager
@@ -36,6 +36,7 @@ class Service:
         self.connector = Connector(self.settings)
         self._client: tuple[tuple, RommClient] | None = None
         self._lists: dict[tuple, tuple[float, Any]] = {}
+        self._bios_lock = threading.Lock()
         self.downloads = DownloadManager(self.settings, self.manifest, self.client, self.emit, self._on_installed)
         self.saves = savesmod.SaveSync(self.settings, self.manifest, self.client, self.bridge, self.emit,
                                        reregister=self._reregister, proc_root=proc_root)
@@ -127,7 +128,14 @@ class Service:
                 "found_by": r.why, "executable": r.executable, "running": bool(emulators.find_instances(
                     emulators.all_ps2_process_names())),
                 "card": {"slot1": {"name": s1.name, "kind": s1.kind, "enabled": s1.enabled},
-                         "wanted": self.settings.get("saves.card_type"), "custom_dir": cfg.custom_dir}}
+                         "wanted": self.settings.get("saves.card_type"), "custom_dir": cfg.custom_dir},
+                "bios": self._bios_summary(r)}
+
+    @staticmethod
+    def _bios_summary(r: emulators.Resolved) -> dict:
+        folder = emulators.bios_dir(r.data_dir)
+        count = sum(1 for f in emulators.list_bios(folder) if f["kind"] == "bios")
+        return {"dir": str(folder), "has_bios": count > 0, "count": count}
 
     def _helper_view(self) -> dict:
         try:
@@ -429,6 +437,79 @@ class Service:
             restored.append(item.name)
         savesmod.Record(rom_id).reset()   # what sigil remembered no longer describes the card
         return {"ok": True, "restored": restored, "message": f"Restored {', '.join(restored) or 'nothing'}"}
+
+    # -- BIOS files ----------------------------------------------------------------------------------------------
+
+    def _ps2(self) -> tuple[emulators.Resolved, Path]:
+        s = self.settings
+        r = emulators.resolve_ps2(s.get("emulators.ps2.emulator"), s.get("emulators.ps2.data_dir"), s.get("emulators.ps2.executable"))
+        return r, emulators.bios_dir(r.data_dir)
+
+    def _ps2_running(self) -> bool:
+        return any(emulators.find_instances(emulators.all_ps2_process_names(), self.proc_root))
+
+    def _bios_remote(self, r: emulators.Resolved, folder: Path) -> tuple[dict, list[dict]]:
+        """What RomM offers for the emulator's platform: ({ok, platform, items, reason, message}, RomM's own records)."""
+        platform: dict | None = None
+        try:
+            client = self.client()
+            for p in self._cached(("platforms",), LIST_CACHE_TTL, client.platforms):
+                if (p.get("slug") or "").lower() in r.profile.platform_slugs:
+                    platform = {"id": p["id"], "name": p.get("display_name") or p.get("custom_name") or p.get("name") or "PlayStation 2"}
+                    break
+            if platform is None:
+                return ({"ok": True, "platform": None, "items": [], "reason": "no_platform",
+                         "message": "RomM has no PlayStation 2 library yet, so it has no BIOS files for it."}, [])
+            raw = client.firmware(platform["id"])
+        except RommError as e:
+            if e.kind == "auth":
+                self.emit("auth_required", {})
+            text = ("This device's sign-in does not include firmware access (the permission firmware.read). To fix it, "
+                    "pair again and allow it when RomM asks." if e.kind == "forbidden" else describe(e))
+            return {"ok": False, "platform": platform, "items": [], "reason": e.kind, "message": text}, []
+        items = bios.describe_items(raw, folder)
+        empty = ("" if items else f"RomM has no firmware for {platform['name']}. Add the BIOS in RomM (open the platform, "
+                                  "then Firmware), or put the file in the folder below yourself.")
+        return {"ok": True, "platform": platform, "items": items, "reason": "" if items else "empty", "message": empty}, raw
+
+    def bios_status(self, remote: bool = True) -> dict:
+        """The emulator's BIOS folder as it is, and with `remote` what RomM offers for it."""
+        r, folder = self._ps2()
+        local = emulators.list_bios(folder)
+        return {"emulator": {"name": r.profile.name, "id": r.profile.id, "running": self._ps2_running()},
+                "dir": str(folder), "dir_exists": folder.is_dir(), "local": local,
+                "has_bios": any(f["kind"] == "bios" for f in local),
+                "remote": self._bios_remote(r, folder)[0] if remote else None}
+
+    def bios_install(self, ids: list[int] | None = None, overwrite: bool = False) -> dict:
+        """Downloads RomM's BIOS files into the emulator's folder. ids: only these (by RomM's firmware ids); None = every
+        file the folder does not have. overwrite replaces a different file of the same name, only for the given ids."""
+        if not self._bios_lock.acquire(blocking=False):
+            return {"ok": False, "message": "BIOS files are already being installed"}
+        try:
+            r, folder = self._ps2()
+            remote, raw = self._bios_remote(r, folder)
+            if not remote["ok"]:
+                return {"ok": False, "error": remote["reason"], "message": remote["message"]}
+            if not raw:
+                return {"ok": False, "error": remote["reason"] or "empty", "message": remote["message"], "status": self.bios_status(False)}
+            if ids is not None:
+                chosen = [fw for fw in raw if fw["id"] in {int(i) for i in ids}]
+                if not chosen:
+                    return {"ok": False, "error": "gone", "message": "RomM does not list those files any more. Refresh the list."}
+            else:
+                chosen = raw
+            try:
+                report = bios.install(self.client(), chosen, folder, overwrite=bool(overwrite) and ids is not None,
+                                      emulator_running=self._ps2_running(), backup_root=paths.backups_dir() / "bios")
+            except OSError as e:
+                return {"ok": False, "error": "space" if e.errno == 28 else "disk", "message": e.strerror or str(e)}
+            status = self.bios_status(False)
+            status["remote"] = {**remote, "items": bios.describe_items(raw, folder)}
+            return {"ok": not (report["failed"] or report["busy"]), "report": report, "dir": str(folder),
+                    "message": bios.summarize(report, folder), "status": status}
+        finally:
+            self._bios_lock.release()
 
     # -- connecting -------------------------------------------------------------------------------------------------
 

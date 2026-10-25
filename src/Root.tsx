@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { ConnectScreen } from "./components/ConnectScreen";
 import type { Nav, Screen } from "./components/Common";
+import { BiosScreen } from "./components/BiosScreen";
 import { ConflictsScreen, DownloadsScreen } from "./components/DownloadsConflicts";
 import { GameScreen } from "./components/GameScreen";
 import { HomeScreen } from "./components/HomeScreen";
@@ -36,8 +37,8 @@ export function Root() {
     home: () => setStack([{ name: "home" }]),
   };
 
-  const connected = () => {
-    alerts.set({ ...alerts.get(), authRequired: false });
+  const connected = (missingScopes: string[] = []) => {
+    alerts.set({ ...alerts.get(), authRequired: false, missingScopes });
     setSignedIn(true);
     nav.home();
     void refresh();
@@ -66,6 +67,8 @@ export function Root() {
       return <DownloadsScreen nav={nav} />;
     case "conflicts":
       return <ConflictsScreen nav={nav} />;
+    case "bios":
+      return <BiosScreen nav={nav} />;
     case "settings":
       return (
         <SettingsScreen

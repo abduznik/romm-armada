@@ -27,7 +27,7 @@ from .romm import (PAIRING_SCOPES, PAIR_CODE_TTL_SECONDS, RommClient, RommError,
                    parse_version)
 from .util import read_json, write_json
 
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 
 
 def device_identifier() -> str:
@@ -147,7 +147,8 @@ class Connector:
         """Reads that the plugin needs, tried once; a 403 names a permission the token lacks."""
         probes = [("platforms.read", lambda: client.platforms()),
                   ("roms.read", lambda: client.roms(limit=1)),
-                  ("assets.read", lambda: client.saves(0))]
+                  ("assets.read", lambda: client.saves(0)),
+                  ("firmware.read", lambda: client.firmware(0))]
         missing: list[str] = []
         for scope, call in probes:
             try:

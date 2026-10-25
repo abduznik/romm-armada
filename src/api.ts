@@ -1,7 +1,7 @@
 import { call } from "@decky/api";
 import type {
-  Conflict, Diagnostics, DeviceFlow, DownloadJob, Overview, Platform, ProbeInfo, Result, RomDetail, RomSummary,
-  Settings, SyncResult, Volume,
+  BiosInstallResult, BiosStatus, Conflict, Diagnostics, DeviceFlow, DownloadJob, Overview, Platform, ProbeInfo, Result,
+  RomDetail, RomSummary, Settings, SyncResult, Volume,
 } from "./types";
 
 const rpc = <T>(method: string, ...args: unknown[]) => call<unknown[], T>(method, ...args);
@@ -57,4 +57,8 @@ export const api = {
   gameSyncReset: (id: number) => rpc<Result>("game_sync_reset", id),
   conflicts: () => rpc<Result<Items<Conflict>>>("conflicts"),
   backupRestore: (id: number, name: string) => rpc<Result<{ message: string }>>("backup_restore", id, name),
+
+  biosStatus: (remote = true) => rpc<Result<BiosStatus>>("bios_status", remote),
+  /** ids: only these RomM firmware files (and `overwrite` may replace a different file of the same name); none = all missing. */
+  biosInstall: (ids?: number[], overwrite = false) => rpc<BiosInstallResult>("bios_install", ids ?? null, overwrite),
 };

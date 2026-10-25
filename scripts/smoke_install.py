@@ -85,7 +85,8 @@ def main() -> int:
         "plugin_dir": str(plugin_dir), "helper_modes_before": exe_before,
         "helper": dg.get("helper"), "helper_tried": dg.get("helper_tried"),
         "emulator": {k: ov["emulator"][k] for k in ("name", "data_dir", "data_dir_exists", "executable", "found_by")},
-        "card": ov["emulator"]["card"], "library_root": ov["library"]["root"], "default_card_type": out["card_type"],
+        "card": ov["emulator"]["card"], "bios": ov["emulator"]["bios"], "library_root": ov["library"]["root"],
+        "default_card_type": out["card_type"],
         "host": dg.get("host"),
     }, indent=2))
     ok = bool(dg.get("helper", {}).get("ok")) and bool(ov.get("ok"))

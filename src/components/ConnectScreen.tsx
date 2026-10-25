@@ -5,7 +5,7 @@ import { formatPairCode, pairCodeReady } from "../format";
 import type { DeviceFlow, ProbeInfo } from "../types";
 import { Muted, Note, colors, placeholderProps, usePolling } from "./Common";
 
-type Props = { onConnected: () => void; reason?: string };
+type Props = { onConnected: (missingScopes: string[]) => void; reason?: string };
 
 export function ConnectScreen({ onConnected, reason }: Props) {
   const [url, setUrl] = useState("");
@@ -13,7 +13,6 @@ export function ConnectScreen({ onConnected, reason }: Props) {
   const [probe, setProbe] = useState<ProbeInfo | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [warn, setWarn] = useState("");
   const [code, setCode] = useState("");
   const [flow, setFlow] = useState<DeviceFlow | null>(null);
   const [advanced, setAdvanced] = useState(false);
@@ -35,12 +34,8 @@ export function ConnectScreen({ onConnected, reason }: Props) {
     };
   }, []);
 
-  const done = (r: { missing_scopes?: string[] }) => {
-    if (r.missing_scopes && r.missing_scopes.length) {
-      setWarn(`Connected, but this token lacks: ${r.missing_scopes.join(", ")}. Make a token with all permissions.`);
-    }
-    onConnected();
-  };
+  // the home screen tells the user which permissions the sign-in lacks; this screen is gone by then
+  const done = (r: { missing_scopes?: string[] }) => onConnected(r.missing_scopes ?? []);
 
   const run = async (what: string, fn: () => Promise<void>) => {
     setBusy(what);
@@ -105,7 +100,6 @@ export function ConnectScreen({ onConnected, reason }: Props) {
     <>
       <PanelSection title="Connect to RomM">
         {reason ? <Note kind="warn">{reason}</Note> : null}
-        {warn ? <Note kind="warn">{warn}</Note> : null}
         <PanelSectionRow>
           <TextField
             label="Server address"

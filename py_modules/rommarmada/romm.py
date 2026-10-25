@@ -20,7 +20,7 @@ CLIENT_NAME = "romm-armada"
 # this device and about play time. Nothing that edits the library.
 PAIRING_SCOPES = [
     "me.read", "roms.read", "platforms.read", "assets.read", "assets.write",
-    "devices.read", "devices.write", "roms.user.read", "roms.user.write",
+    "devices.read", "devices.write", "roms.user.read", "roms.user.write", "firmware.read",
 ]
 
 
@@ -36,7 +36,7 @@ class RommError(Exception):
         self.net_kind = net_kind
 
 
-def _wrap(e: Exception) -> RommError:
+def wrap_error(e: Exception) -> RommError:
     if isinstance(e, NetworkError):
         return RommError("network", e.message, net_kind=e.kind)
     assert isinstance(e, HttpError)
@@ -93,7 +93,7 @@ class RommClient:
         try:
             return self.http.request(method, path, **kw).json()
         except (HttpError, NetworkError) as e:
-            raise _wrap(e) from None
+            raise wrap_error(e) from None
         except ValueError:
             raise RommError("server", "The server sent something that is not JSON") from None
 
@@ -133,9 +133,9 @@ class RommClient:
                          "access_denied": "denied", "expired_token": "expired"}
                 if code in table:
                     return {"status": table[code]}
-            raise _wrap(e) from None
+            raise wrap_error(e) from None
         except NetworkError as e:
-            raise _wrap(e) from None
+            raise wrap_error(e) from None
 
     def exchange_pair_code(self, code: str) -> dict:
         """Trades a pairing code (RomM's web UI, API tokens, Pair) for the token behind it."""
@@ -203,6 +203,16 @@ class RommClient:
             return self.http.base + "/assets/romm/resources/" + path.lstrip("/") if not path.startswith("/") else self.http.base + path
         return rom.get("url_cover") or ""
 
+    # -- firmware (BIOS files) -----------------------------------------------------------------
+
+    def firmware(self, platform_id: int) -> list[dict]:
+        return self._json("GET", "/api/firmware", params={"platform_id": platform_id}) or []
+
+    @staticmethod
+    def firmware_path(fw: dict) -> str:
+        from urllib.parse import quote
+        return f"/api/firmware/{fw['id']}/content/{quote(fw['file_name'])}"
+
     # -- saves -----------------------------------------------------------------------------
 
     def saves(self, rom_id: int, device_id: str | None = None, slot: str | None = None) -> list[dict]:
@@ -220,7 +230,7 @@ class RommClient:
                                   timeout=max(60.0, self.http.timeout), retries=0)
             return r.json() or {}
         except (HttpError, NetworkError) as e:
-            raise _wrap(e) from None
+            raise wrap_error(e) from None
 
     def download_save(self, save_id: int, device_id: str, session_id: int | None = None,
                       optimistic: bool = True) -> bytes:
@@ -230,7 +240,7 @@ class RommClient:
                                           "optimistic": optimistic})
             return r.body
         except (HttpError, NetworkError) as e:
-            raise _wrap(e) from None
+            raise wrap_error(e) from None
 
     def confirm_download(self, save_id: int, device_id: str, content_hash: str) -> dict:
         return self._json("POST", f"/api/saves/{save_id}/downloaded", retries=0,

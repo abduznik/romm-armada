@@ -62,6 +62,16 @@ class FirstUploadTests(SyncBase):
         self.a.play(b"mine" * 50)
         self.a.play(b"someone else's", serial_folder="BESLES-99999")
         self.sync(self.a)
+        # RomM gets sigil's 8 MB card image, but the only save inside it is this game's, and the record says so
+        saves = self.server_saves()
+        self.assertEqual(len(saves[0]["data"]), 8650752)
+        with self.a.active():
+            from rommarmada import saves as savesmod
+            unit = savesmod.Record(self.rom).last["unit"]
+            shown = self.a.sync.status(self.rom)["last"]["unit"]
+        self.assertEqual(shown, unit)
+        self.assertEqual((unit["size"], unit["contents"]), (8650752, ["BASLUS-20152"]))
+        self.assertTrue(0 < unit["bytes"] < 100_000, unit)
         # restore the unit alone on a clean card: the other game's folder is not in it
         self.b.card().parent.mkdir(parents=True, exist_ok=True)
         r = self.sync(self.b)
@@ -91,6 +101,10 @@ class PullTests(SyncBase):
         self.assertEqual(r["status"], "downloaded", r)
         self.assertEqual(self.b.save_bytes(), self.a.save_bytes())
         self.assertTrue(self.b.card().is_dir(), "the card must stay a folder card")
+        with self.b.active():
+            from rommarmada import saves as savesmod
+            got = savesmod.Record(self.rom).last
+        self.assertEqual((got["action"], got["unit"]["contents"]), ("download", ["BASLUS-20152"]))
         # the baseline was confirmed to the server, so b is not told it has something to upload
         save = self.server_saves()[0]
         self.assertEqual(self.mock.syncs[(self.b.device_id, save["id"])]["hash"], save["content_hash"])

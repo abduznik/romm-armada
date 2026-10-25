@@ -1,7 +1,7 @@
 import { ButtonItem, PanelSection, PanelSectionRow } from "@decky/ui";
 import { useState } from "react";
 import { api } from "../api";
-import { bytes, join } from "../format";
+import { bytes, describeScopes, join } from "../format";
 import { alerts, downloads, setConflicts, setDownloads, useStore } from "../store";
 import type { Overview, SyncResult } from "../types";
 import { Info, Muted, Nav, Note, usePolling } from "./Common";
@@ -87,10 +87,33 @@ export function HomeScreen({ nav }: { nav: Nav }) {
             </ButtonItem>
           </PanelSectionRow>
         ) : null}
+        {al.missingScopes.length > 0 ? (
+          <>
+            <Note kind="warn">
+              Connected, but this sign-in cannot do everything: it lacks {describeScopes(al.missingScopes)}. Pair again and
+              allow all of them.
+            </Note>
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={() => nav.push({ name: "connect" })}>
+                Pair again
+              </ButtonItem>
+            </PanelSectionRow>
+          </>
+        ) : null}
         {ov && !ov.helper.ok ? <Note kind="bad">The save helper does not run on this device: {ov.helper.error}</Note> : null}
       </PanelSection>
 
       <PanelSection title="Games">
+        {em && !em.bios.has_bios ? (
+          <>
+            <Note kind="warn">{em.name} has no BIOS yet, and cannot start a game without one.</Note>
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={() => nav.push({ name: "bios" })}>
+                Get the BIOS from RomM
+              </ButtonItem>
+            </PanelSectionRow>
+          </>
+        ) : null}
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => nav.push({ name: "platforms" })}>
             Browse the library

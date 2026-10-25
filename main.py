@@ -167,6 +167,14 @@ class Plugin:
     async def downloads_clear(self):
         return await self._run(self.svc.downloads.clear)
 
+    # -- BIOS files -------------------------------------------------------------------------------------------
+
+    async def bios_status(self, remote=True):
+        return await self._run(self.svc.bios_status, bool(remote))
+
+    async def bios_install(self, ids=None, overwrite=False):
+        return await self._run(self.svc.bios_install, None if ids is None else [int(i) for i in ids], bool(overwrite))
+
     # -- saves ------------------------------------------------------------------------------------------------
 
     async def sync_game(self, rom_id, resolution=None):

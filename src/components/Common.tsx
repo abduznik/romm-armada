@@ -13,6 +13,7 @@ export type Screen =
   | { name: "game"; id: number }
   | { name: "downloads" }
   | { name: "conflicts" }
+  | { name: "bios" }
   | { name: "settings"; section?: "connection" | "library" | "saves" | "emulator" | "about" };
 
 export type Nav = {

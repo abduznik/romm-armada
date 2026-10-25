@@ -25,7 +25,8 @@ ROMM_IMAGE = os.environ.get("ROMM_IMAGE", "docker.io/rommapp/romm:5.4.1")
 DB_IMAGE = os.environ.get("ROMM_DB_IMAGE", "docker.io/library/mariadb:11")
 PORT = int(os.environ.get("ROMM_PORT", "18080"))
 ALL_SCOPES = ["me.read", "me.write", "roms.read", "platforms.read", "assets.read", "assets.write", "devices.read",
-              "devices.write", "roms.user.read", "roms.user.write", "users.read", "users.write", "tasks.run"]
+              "devices.write", "roms.user.read", "roms.user.write", "users.read", "users.write", "tasks.run",
+              "firmware.read", "firmware.write"]
 
 
 def sh(*args, check=True, timeout=300):
@@ -162,9 +163,9 @@ class RealRommTests(unittest.TestCase):
         """Signs the device in. With a real pairing code from the real server, or (RomM allows 5 code exchanges a
         minute) with the token behind such a code, which is what the typed code turns into anyway."""
         from rommarmada.connect import Connector
-        made = self.admin.request("POST", "/api/client-tokens", json_body={"name": f"test {dev.name}", "scopes": [
-            "me.read", "roms.read", "platforms.read", "assets.read", "assets.write", "devices.read", "devices.write",
-            "roms.user.read", "roms.user.write"]}).json()
+        from rommarmada.romm import PAIRING_SCOPES
+        made = self.admin.request("POST", "/api/client-tokens", json_body={"name": f"test {dev.name}",
+                                                                          "scopes": PAIRING_SCOPES}).json()
         with dev.active():
             if via_code:
                 code = self.admin.request("POST", f"/api/client-tokens/{made['id']}/pair").json()["code"]
@@ -348,6 +349,61 @@ class RealRommTests(unittest.TestCase):
                 "rom_id": a.rom_id, "save_slot": "autosave", "start_time": ts_to_iso(now - 90).split(".")[0] + "Z",
                 "end_time": ts_to_iso(now).split(".")[0] + "Z", "duration_ms": 90_000}])
         self.assertEqual(out["created_count"], 1)
+
+    def test_07_bios_files_from_real_romm_firmware(self):
+        """The firmware list and download RomM really serves, into the emulator's BIOS folder; and the real server's
+        answer to a sign-in that may not read firmware."""
+        from rommarmada.connect import Connector
+        from rommarmada.http import multipart
+        from rommarmada.romm import PAIRING_SCOPES
+        from rommarmada.service import Service
+        from rommarmada.sigil import Savebridge
+        plats = self.admin.get_json("/api/platforms")
+        pid = next(p["id"] for p in plats if p["slug"] == "ps2")
+        files = {}
+        for name, seed in (("scph70012.bin", b"seven"), ("scph39001.bin", b"three")):
+            files[name] = (hashlib.sha256(seed).digest() * (4 * 1024 * 1024 // 32))[:4 * 1024 * 1024]
+            body, ctype = multipart(None, [("files", name, files[name], "application/octet-stream")])
+            self.admin.request("POST", "/api/firmware", params={"platform_id": pid}, data=body,
+                               headers={"Content-Type": ctype}, timeout=60, retries=0)
+
+        d = self.device("bios-a")
+        done = self.pair(d, via_code=False)
+        self.assertEqual(done["missing_scopes"], [], "the real server accepts the firmware probe the plugin makes")
+        (self.tmp / "proc").mkdir()
+        with d.active():
+            svc = Service(emit=lambda *a: None, bridge=Savebridge(BIN), settings=d.settings, proc_root=str(self.tmp / "proc"))
+            st = svc.bios_status()
+            self.assertTrue(st["remote"]["ok"], st)
+            self.assertEqual(sorted(i["name"] for i in st["remote"]["items"]), sorted(files))
+            self.assertEqual({i["state"] for i in st["remote"]["items"]}, {"missing"})
+            self.assertEqual(st["dir"], str(d.home / ".config" / "ARMSX2" / "bios"))
+            out = svc.bios_install()
+            self.assertTrue(out["ok"], out)
+            for name, data in files.items():
+                self.assertEqual((Path(st["dir"]) / name).read_bytes(), data, name)
+            self.assertEqual(sorted(p.name for p in Path(st["dir"]).iterdir()), sorted(files), "no half-finished files")
+            self.assertTrue(svc.overview()["emulator"]["bios"]["has_bios"])
+            again = svc.bios_install()
+            self.assertEqual((again["report"]["installed"], sorted(again["report"]["skipped"])), ([], sorted(files)))
+
+        # RomM's hashes for the stored files are the ones the plugin verified against
+        listed = {f["file_name"]: f for f in self.admin.get_json("/api/firmware", params={"platform_id": pid})}
+        for name, data in files.items():
+            self.assertEqual(listed[name]["md5_hash"], hashlib.md5(data).hexdigest())
+
+        # a token that may not read firmware is told so, by the real server
+        weak = self.admin.request("POST", "/api/client-tokens", json_body={
+            "name": "no firmware", "scopes": [x for x in PAIRING_SCOPES if x != "firmware.read"]}).json()
+        w = self.device("bios-weak")
+        with w.active():
+            signed = Connector(w.settings).sign_in_token(self.url, weak["raw_token"])
+            self.assertEqual(signed["missing_scopes"], ["firmware.read"])
+            svc2 = Service(emit=lambda *a: None, bridge=Savebridge(BIN), settings=w.settings, proc_root=str(self.tmp / "proc"))
+            refused = svc2.bios_status()["remote"]
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "forbidden")
+        self.assertIn("pair again", refused["message"])
 
 
 def sys_path_fix():

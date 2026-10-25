@@ -24,10 +24,13 @@ export function useStore<T>(store: Store<T>): T {
 export const downloads = new Store<Record<number, DownloadJob>>({});
 
 /** Things the user has to look at; the home screen shows them. */
-export const alerts = new Store<{ authRequired: boolean; conflicts: Record<number, Conflict>; emulatorRunning: boolean }>({
+export const alerts = new Store<{
+  authRequired: boolean; conflicts: Record<number, Conflict>; emulatorRunning: boolean; missingScopes: string[];
+}>({
   authRequired: false,
   conflicts: {},
   emulatorRunning: false,
+  missingScopes: [],
 });
 
 export function setDownloads(list: DownloadJob[]): void {

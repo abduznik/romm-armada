@@ -30,7 +30,7 @@ export type CardInfo = {
 
 export type EmulatorInfo = {
   name: string; id: string; data_dir: string; data_dir_exists: boolean; found_by: string; executable: string;
-  running: boolean; card: CardInfo;
+  running: boolean; card: CardInfo; bios: { dir: string; has_bios: boolean; count: number };
 };
 
 export type Conflict = {
@@ -76,9 +76,12 @@ export type SyncResult = {
     "auth" | "unsupported" | "disabled" | "paused" | "not_installed";
 };
 
+/** The card image RomM keeps for a game: its size and the game saves inside it (`bytes` is the data they take). */
+export type SaveUnit = { size: number; contents: string[]; bytes: number };
+
 export type SyncStatus = {
   rom_id: number; supported: boolean; enabled?: boolean; emulator?: string; data_dir?: string; data_dir_exists?: boolean;
-  last?: { at: string; action: string } | null; conflict?: Conflict | null;
+  last?: { at: string; action: string; unit?: SaveUnit | null } | null; conflict?: Conflict | null;
   history?: { at: string; action: string; detail: string }[];
   backups?: { name: string; path: string; size: number }[];
   slots?: { slot: number; enabled: boolean; name: string; kind: string }[];
@@ -108,4 +111,32 @@ export type Diagnostics = {
   paths: Record<string, string>;
   emulator: { name: string; data_dir: string; ini: string; ini_exists: boolean; executable: string; found_by: string };
   library_free: string;
+};
+
+export type BiosFile = { name: string; size: number; kind: "bios" | "extra" | "other" };
+
+/** One of RomM's firmware files, and what the emulator's folder says about it. */
+export type BiosItem = {
+  id: number; name: string; size: number; verified: boolean; md5: string; held_as: string;
+  state: "missing" | "installed" | "present" | "different";
+};
+
+export type BiosRemote = {
+  ok: boolean; platform: { id: number; name: string } | null; items: BiosItem[];
+  reason: "" | "empty" | "no_platform" | "forbidden" | "auth" | "network" | string; message: string;
+};
+
+export type BiosStatus = {
+  emulator: { name: string; id: string; running: boolean };
+  dir: string; dir_exists: boolean; local: BiosFile[]; has_bios: boolean; remote: BiosRemote | null;
+};
+
+export type BiosReport = {
+  installed: string[]; skipped: string[]; conflicts: string[]; busy: string[];
+  failed: { name: string; error: string; kind: string }[];
+};
+
+/** bios_install answers with the report and the new status even when something failed, so it is not a plain Result. */
+export type BiosInstallResult = {
+  ok: boolean; message: string; error?: string; report?: BiosReport; status?: BiosStatus; dir?: string;
 };
