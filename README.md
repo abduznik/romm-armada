@@ -19,7 +19,7 @@ The first system is **PlayStation 2**, with **ARMSX2** (the Arm64 PCSX2 fork Arm
 
 ## Install
 
-1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.3.0.zip`.
+1. Decky menu → Settings → Developer → *Install Plugin from Zip* → pick `RomM-Armada-0.3.1.zip`.
 2. Open the plugin from Decky's Quick Access menu.
 
 ## Connect
@@ -149,9 +149,9 @@ ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s    # a real RomM + Maria
   permission). These runs also caught that RomM merges devices with the same hostname, so each install now registers
   under its own, and that 5.0.0 starts scans only over its websocket (the test harness runs the scan inside the container).
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 210 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every
+- 211 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every
   archive shape, BIOS install, the watcher, remote installs, the Decky RPC layer under a stand-in for Decky's module) and
-  22 rendered panel scenarios (typed pairing code, device
+  24 rendered panel scenarios (typed pairing code, device
   approval, browsing, downloading, conflicts, BIOS files, settings, disconnecting). The panel also type-checks against
   `@decky/ui` 4.11.
 - **On a handheld** (reported by its owner, 0.1.0 on a Retroid with Armada OS): ARMSX2 launched, the sync settled on

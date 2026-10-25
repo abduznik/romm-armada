@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
+- Fixed: after pressing "Show more" in the games list the Quick Access Menu stopped answering the controller, and
+  scrolling by touch then closed it. The button turned itself off while it loaded, and Steam takes the controller's focus
+  away from a button that turns off (or goes away). A long list now keeps one row at its end for good ("Show more (60 of
+  70)", then "All 70 games are shown"), and no button disables itself while its action runs any more: Sync saves now,
+  Download, Sync this save now, Pair this device, the BIOS buttons and the save decisions press again and do nothing
+  until the work is done.
+- Coming back from a game's page reopens the games list as long as it was, instead of the first 30.
 - A save that is a whole memory card with none of this game's saves on it now says whose saves it holds ("it has
-  BASLUS-20001TekkenTT, BASCUS-97399GodOfWar …") instead of only that it holds nothing for the game. Found when a Tekken 4
-  entry on RomM turned out to be Freegosy's old upload of a whole PC card with other games' saves and none of Tekken 4's.
+  BASLUS-20001TekkenTT, BASCUS-97399GodOfWar …"). Found when a Tekken 4 entry on RomM turned out to be Freegosy's old upload of a
+  whole PC card with other games' saves and none of Tekken 4's.
 
 ## 0.3.0
 

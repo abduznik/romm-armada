@@ -119,7 +119,10 @@ describe("the panel", () => {
     await type(h, "Server address", "romm.local:8080");
     await type(h, "Pairing code", "abc");
     assert.equal(input(h, "Pairing code").value, "ABC");
-    assert.equal(findButton(h, "Pair this device").disabled, true, "three characters are not a code");
+    assert.equal(findButton(h, "Pair this device").disabled, false, "stays pressable, so a cleared field cannot drop the controller focus");
+    await click(h, "Pair this device");
+    assert.match(text(h), /A pairing code has 8 characters/);
+    assert.equal(backend.calls.some((c) => c.method === "connect_code"), false, "three characters are not sent as a code");
     await type(h, "Pairing code", "abcd efgh");
     assert.equal(input(h, "Pairing code").value, "ABCD-EFGH");
     assert.equal(findButton(h, "Pair this device").disabled, false);
@@ -381,8 +384,11 @@ describe("the panel", () => {
     await click(h, "Install 2 missing files");
     assert.deepEqual(backend.calls.find((c) => c.method === "bios_install")!.args, [null, false]);
     assert.match(text(h), /Installed 2 files in \/home\/armada\/\.config\/ARMSX2\/bios\./);
-    assert.equal(findButton(h, "Everything from RomM is in the folder").disabled, true);
-    assert.equal(findButton(h, "✓ scph70012.bin").disabled, true, "a file that is there cannot be fetched again");
+    const installs = () => backend.calls.filter((c) => c.method === "bios_install").length;
+    assert.equal(findButton(h, "Everything from RomM is in the folder").disabled, false, "never disabled under the controller focus");
+    await click(h, "Everything from RomM is in the folder");
+    await click(h, "✓ scph70012.bin");
+    assert.equal(installs(), 1, "a file that is there is not fetched again, and nothing is asked of the server");
     assert.doesNotMatch(text(h), /cannot start a game without a BIOS image/);
     await click(h, "Back");
     assert.doesNotMatch(text(h), /has no BIOS yet/, "the home screen follows");
@@ -407,7 +413,8 @@ describe("the panel", () => {
     await click(h, "Get the BIOS from RomM");
     assert.match(text(h), /in the folder under another name \(mine\.bin\)/);
     assert.match(text(h), /a different file has this name/);
-    assert.equal(findButton(h, "scph10000.bin").disabled, true);
+    await click(h, "scph10000.bin");
+    assert.equal(calls.length, 0, "a file that is there under another name is left alone");
     await click(h, "Install 1 missing file");
     assert.deepEqual(calls.pop(), [null, false]);
     await click(h, /^scph70012\.bin/);
@@ -490,6 +497,68 @@ describe("the panel", () => {
     assert.match(text(h), /1 in \/home\/armada\/\.config\/ARMSX2\/bios/);
     await click(h, "BIOS files");
     assert.match(text(h), /scph70012\.bin/);
+    await h.unmount();
+  });
+
+  test("show more is never disabled or removed under the controller: it loads the next page and stays at the end of the list", async () => {
+    const rom = (n: number) => ({ id: 1000 + n, name: `Game ${String(n).padStart(3, "0")}`, fs_name: `g${n}.iso`, size: 1e9, platform_id: 1, platform_slug: "ps2", regions: [], cover: "", installed: false, download: null });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    backendWith({
+      roms: async (_platform: number, _q: string, offset: number, limit: number) => {
+        if (offset > 0 && offset < 60) await gate;           // the second page is slow
+        return { ok: true, total: 70, offset, stale: false, items: Array.from({ length: Math.min(limit, 70 - offset) }, (_, i) => rom(offset + i)) };
+      },
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Browse the library");
+    await click(h, "PlayStation 2");
+    assert.match(text(h), /Game 029/);
+    assert.doesNotMatch(text(h), /Game 030/);
+    assert.equal(findButton(h, "Show more (30 of 70)").disabled, false);
+    await click(h, "Show more (30 of 70)");
+    const loading = findButton(h, "Loading…");
+    assert.equal(loading.disabled, false, "the button that was pressed is still there to hold the focus while the page loads");
+    await click(h, "Loading…");
+    assert.equal(backend.calls.filter((c) => c.method === "roms" && c.args[2] === 30).length, 1, "pressing it again does not ask twice");
+    release();
+    await settle(4);
+    assert.match(text(h), /Game 059/);
+    assert.equal(findButton(h, "Show more (60 of 70)").disabled, false);
+    await click(h, "Show more (60 of 70)");
+    await settle(2);
+    assert.match(text(h), /Game 069/);
+    const last = findButton(h, "All 70 games are shown");
+    assert.equal(last.disabled, false, "the list is complete but the row stays, so the focus is not left without a place");
+    const asked = backend.calls.filter((c) => c.method === "roms").length;
+    await click(h, "All 70 games are shown");
+    assert.equal(backend.calls.filter((c) => c.method === "roms").length, asked, "and it asks for nothing more");
+    // opening a game and coming back reopens the list as long as it was, from fresh data
+    await click(h, "Game 003");
+    await click(h, "Back");
+    await settle(3);
+    const reopened = backend.calls.filter((c) => c.method === "roms").pop()!;
+    assert.deepEqual([reopened.args[2], reopened.args[3]], [0, 70]);
+    assert.match(text(h), /Game 069/);
+    assert.match(text(h), /All 70 games are shown/);
+    await h.unmount();
+  });
+
+  test("a short list has no show-more row, and sync saves now stays pressable while it works", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    backendWith({ sync_all: async () => (await gate, { ok: true, items: [{ rom_id: 101, name: "Test Game (USA)", status: "uploaded", message: "" }] }) });
+    const h = await mount(<Root />);
+    await settle(3);
+    await click(h, "Sync saves now");
+    const working = findButton(h, "Syncing…");
+    assert.equal(working.disabled, false, "a button that turns disabled under the controller loses the focus");
+    await click(h, "Syncing…");
+    assert.equal(backend.calls.filter((c) => c.method === "sync_all").length, 1, "a second press while it works does nothing");
+    release();
+    await settle(4);
+    assert.match(text(h), /1 uploaded/);
     await h.unmount();
   });
 

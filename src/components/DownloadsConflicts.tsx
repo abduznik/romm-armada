@@ -100,6 +100,7 @@ function ConflictCard({ c, onDone }: { c: Conflict; onDone: (msg: string) => voi
   const [busy, setBusy] = useState(false);
   const decide = (choice: "server" | "device" | "keep_both", title: string, text: string) =>
     confirm(title, text, "Do it", async () => {
+      if (busy) return;
       setBusy(true);
       try {
         const r = await api.syncGame(c.rom_id, choice);
@@ -124,7 +125,6 @@ function ConflictCard({ c, onDone }: { c: Conflict; onDone: (msg: string) => voi
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          disabled={busy}
           description="Replaces the save on this device. It is backed up first."
           onClick={() => decide("server", "Use RomM's save?", `${c.name}: the save on this device is replaced by the one on RomM. A backup of the memory card is kept.`)}
         >
@@ -134,7 +134,7 @@ function ConflictCard({ c, onDone }: { c: Conflict; onDone: (msg: string) => voi
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          disabled={busy || !c.local.has_saves}
+          disabled={!c.local.has_saves}
           description="Uploads this device's save as the newest on RomM."
           onClick={() => decide("device", "Use this device's save?", `${c.name}: this device's save becomes the newest on RomM. The older one stays in its history.`)}
         >
@@ -144,7 +144,7 @@ function ConflictCard({ c, onDone }: { c: Conflict; onDone: (msg: string) => voi
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          disabled={busy || !c.local.has_saves}
+          disabled={!c.local.has_saves}
           description="Stores this device's save in its own slot on RomM, then uses RomM's."
           onClick={() => decide("keep_both", "Keep both?", `${c.name}: this device's save is stored in a separate slot on RomM, then RomM's save is restored here.`)}
         >

@@ -160,8 +160,9 @@ export function HomeScreen({ nav }: { nav: Nav }) {
         <PanelSectionRow>
           <ButtonItem
             layout="below"
-            disabled={syncing || !ov?.saves.enabled}
+            disabled={!ov?.saves.enabled}
             onClick={async () => {
+              if (syncing) return;
               setSyncing(true);
               setSyncMsg("");
               try {

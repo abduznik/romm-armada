@@ -4,7 +4,7 @@ import { api } from "../api";
 import { bytes, join, percent } from "../format";
 import { downloads, useStore } from "../store";
 import type { DownloadJob, Platform, RomSummary } from "../types";
-import { BackBar, Muted, Nav, Note } from "./Common";
+import { BackBar, Muted, Nav, Note, useSingleFlight } from "./Common";
 
 export function PlatformsScreen({ nav }: { nav: Nav }) {
   const [list, setList] = useState<Platform[] | null>(null);
@@ -51,6 +51,9 @@ export function PlatformsScreen({ nav }: { nav: Nav }) {
 }
 
 const PAGE = 30;
+const MAX_REOPEN = 300;
+/** How many games each list showed when it was left, so coming back from a game's page reopens it as long as it was. */
+const shown = new Map<string, number>();
 
 function statusOf(r: RomSummary, job: DownloadJob | undefined): string {
   const j = job ?? r.download;
@@ -70,6 +73,9 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
   const [note, setNote] = useState("");
   const dls = useStore(downloads);
   const seq = useRef(0);
+  const itemsRef = useRef<RomSummary[]>([]);
+  const once = useSingleFlight();
+  const memory = `${platformId ?? "all"}|${title}|${query}`;
 
   useEffect(() => {
     const t = window.setTimeout(() => setQuery(search.trim()), 450);
@@ -80,10 +86,14 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
     const mine = ++seq.current;
     setBusy(true);
     try {
-      const r = installedOnly ? await api.installed(query, offset, PAGE) : await api.roms(platformId, query, offset, PAGE);
+      const limit = offset === 0 ? Math.min(Math.max(PAGE, shown.get(memory) ?? 0), MAX_REOPEN) : PAGE;
+      const r = installedOnly ? await api.installed(query, offset, limit) : await api.roms(platformId, query, offset, limit);
       if (mine !== seq.current) return;
       if (!r.ok) return setNote(r.message);
-      setItems((cur) => (offset === 0 ? r.items : [...cur, ...r.items]));
+      const next = offset === 0 ? r.items : [...itemsRef.current, ...r.items];
+      itemsRef.current = next;
+      shown.set(memory, next.length);
+      setItems(next);
       setTotal(r.total);
       setNote(r.stale ? r.message ?? "RomM cannot be reached. Showing installed games only." : "");
     } finally {
@@ -121,10 +131,12 @@ export function GamesScreen({ nav, platformId, title }: { nav: Nav; platformId: 
             <Muted>{query ? "Nothing matches." : "Nothing here yet."}</Muted>
           </PanelSectionRow>
         ) : null}
-        {items.length < total ? (
+        {items.length > 0 && total > PAGE ? (
+          // One row for the whole life of a long list: it is never disabled and never removed, so the controller focus that
+          // pressed it is still on it when the next page arrives, and on the last page it only says the list is complete.
           <PanelSectionRow>
-            <ButtonItem layout="below" disabled={busy} onClick={() => void load(items.length)}>
-              {busy ? "Loading…" : `Show more (${items.length} of ${total})`}
+            <ButtonItem layout="below" onClick={() => void once(async () => (items.length < total ? load(items.length) : undefined))}>
+              {busy ? "Loading…" : items.length < total ? `Show more (${items.length} of ${total})` : `All ${total} games are shown`}
             </ButtonItem>
           </PanelSectionRow>
         ) : null}

@@ -27,7 +27,7 @@ from .romm import (PAIRING_SCOPES, PAIR_CODE_TTL_SECONDS, RommClient, RommError,
                    parse_version)
 from .util import read_json, write_json
 
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.3.1"
 
 
 def device_identifier() -> str:

@@ -45,6 +45,7 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
   };
 
   const sync = async () => {
+    if (busy) return;
     setBusy("sync");
     setMsg(null);
     try {
@@ -158,8 +159,9 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              disabled={!!busy || !!d.offline}
+              disabled={!!d.offline}
               onClick={async () => {
+                if (busy) return;
                 setBusy("install");
                 const r = await api.install(id);
                 setBusy("");
@@ -225,7 +227,7 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
             <Info label="Memory card">{`${saves.slots[0].name} (${saves.slots[0].kind})`}</Info>
           ) : null}
           <PanelSectionRow>
-            <ButtonItem layout="below" disabled={!!busy || !saves.supported} onClick={sync}>
+            <ButtonItem layout="below" disabled={!saves.supported} onClick={sync}>
               {busy === "sync" ? "Syncing…" : "Sync this save now"}
             </ButtonItem>
           </PanelSectionRow>

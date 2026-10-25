@@ -34,6 +34,7 @@ export function BiosScreen({ nav }: { nav: Nav }) {
   }, []);
 
   const run = async (ids?: number[], overwrite = false) => {
+    if (busy) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -115,7 +116,7 @@ export function BiosScreen({ nav }: { nav: Nav }) {
             {remote && remote.ok && remote.items.length > 0 ? (
               <>
                 <PanelSectionRow>
-                  <ButtonItem layout="below" disabled={busy || missing.length === 0} onClick={() => void run()}>
+                  <ButtonItem layout="below" onClick={() => missing.length > 0 && void run()}>
                     {busy
                       ? "Installing…"
                       : missing.length === 0
@@ -127,7 +128,6 @@ export function BiosScreen({ nav }: { nav: Nav }) {
                   <PanelSectionRow key={i.id}>
                     <ButtonItem
                       layout="below"
-                      disabled={busy || i.state === "installed" || i.state === "present"}
                       description={join([bytes(i.size), i.verified && "verified by RomM", STATE_TEXT[i.state] + (i.state === "present" ? ` (${i.held_as})` : "")])}
                       onClick={() => pick(i)}
                     >
@@ -140,7 +140,7 @@ export function BiosScreen({ nav }: { nav: Nav }) {
             ) : null}
             {msg ? <Note kind={msg.kind}>{msg.text}</Note> : null}
             <PanelSectionRow>
-              <ButtonItem layout="below" disabled={busy} onClick={() => void load()}>
+              <ButtonItem layout="below" onClick={() => !busy && void load()}>
                 Check again
               </ButtonItem>
             </PanelSectionRow>

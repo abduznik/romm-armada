@@ -38,6 +38,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
   const done = (r: { missing_scopes?: string[] }) => onConnected(r.missing_scopes ?? []);
 
   const run = async (what: string, fn: () => Promise<void>) => {
+    if (busy) return;
     setBusy(what);
     setError("");
     try {
@@ -57,8 +58,11 @@ export function ConnectScreen({ onConnected, reason }: Props) {
       setUrl(r.url);
     });
 
-  const pair = () =>
-    run("code", async () => {
+  // Pressable with an incomplete code (it says what is wrong): after a refused code the field is cleared, and a button that turned
+  // disabled by that would lose the controller focus.
+  const pair = () => {
+    if (!pairCodeReady(code)) return void setError("A pairing code has 8 characters. Type the one RomM is showing.");
+    return run("code", async () => {
       const r = await api.pairWithCode(url, code, verify);
       if (!r.ok) {
         setCode(r.error === "bad_code" ? code : "");
@@ -66,6 +70,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
       }
       done(r);
     });
+  };
 
   const startFlow = () =>
     run("flow", async () => {
@@ -113,7 +118,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={!url.trim() || !!busy} onClick={check}>
+          <ButtonItem layout="below" disabled={!url.trim()} onClick={check}>
             {busy === "probe" ? "Checking…" : reachable ? "Server reached again" : "Check the server"}
           </ButtonItem>
         </PanelSectionRow>
@@ -141,7 +146,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={!url.trim() || !pairCodeReady(code) || !!busy} onClick={pair}>
+          <ButtonItem layout="below" disabled={!url.trim()} onClick={pair}>
             {busy === "code" ? "Pairing…" : "Pair this device"}
           </ButtonItem>
         </PanelSectionRow>
@@ -176,7 +181,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
               <Muted>This device shows a code; you approve it while signed in to RomM on your phone or PC.</Muted>
             </PanelSectionRow>
             <PanelSectionRow>
-              <ButtonItem layout="below" disabled={!url.trim() || !!busy} onClick={startFlow}>
+              <ButtonItem layout="below" disabled={!url.trim()} onClick={startFlow}>
                 {busy === "flow" ? "Asking RomM…" : "Show a code on this device"}
               </ButtonItem>
             </PanelSectionRow>
@@ -209,7 +214,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
-                disabled={!url.trim() || !token.trim() || !!busy}
+                disabled={!url.trim() || !token.trim()}
                 onClick={() =>
                   run("token", async () => {
                     const r = await api.signInToken(url, token, verify);
@@ -234,7 +239,7 @@ export function ConnectScreen({ onConnected, reason }: Props) {
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
-                disabled={!url.trim() || !user || !pass || !!busy}
+                disabled={!url.trim() || !user || !pass}
                 onClick={() =>
                   run("password", async () => {
                     const r = await api.signInPassword(url, user, pass, verify);

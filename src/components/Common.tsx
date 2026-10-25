@@ -82,6 +82,25 @@ export function Bar({ value, indeterminate = false, color }: { value: number; in
   );
 }
 
+/**
+ * Starts an action only when the previous one has finished. A button uses this instead of `disabled={busy}`: Steam takes the
+ * controller's focus away from a button that turns disabled, or that leaves the screen, and the Quick Access Menu then ignores
+ * the controller (and closes on the next touch) until something is focused again. A button that only has nothing to do now
+ * stays pressable and does nothing.
+ */
+export function useSingleFlight(): <T>(fn: () => Promise<T>) => Promise<T | undefined> {
+  const running = useRef(false);
+  return useCallback(async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
+    if (running.current) return undefined;
+    running.current = true;
+    try {
+      return await fn();
+    } finally {
+      running.current = false;
+    }
+  }, []);
+}
+
 /** Runs `fn` now and again every `ms`; cleans up. Errors are the caller's to handle. */
 export function usePolling(fn: () => void | Promise<void>, ms: number, deps: unknown[] = []): void {
   const ref = useRef(fn);
