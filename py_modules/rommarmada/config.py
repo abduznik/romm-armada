@@ -172,10 +172,16 @@ SCHEMA: dict[str, tuple[Any, Callable[[Any], Any], bool]] = {
     "saves.autocleanup_limit": (10, _int_range(1, 100), False),
     "saves.playtime": (True, _bool, False),
     "saves.notify": (True, _bool, False),
+    "states.enabled": (True, _bool, False),            # quick-save files (save states) go to RomM's states, one per file name
 
     "emulators.ps2.emulator": ("auto", _choice("auto", "armsx2", "pcsx2"), False),
     "emulators.ps2.data_dir": ("", _path(), False),
     "emulators.ps2.executable": ("", _path(), False),
+    "emulators.retroarch.data_dir": ("", _path(), False),       # empty = look for it (~/.config/retroarch)
+    "emulators.retroarch.save_dir": ("", _path(), False),       # empty = what retroarch.cfg says
+    "emulators.retroarch.executable": ("", _path(), False),
+    "emulators.dolphin.data_dir": ("", _path(), False),         # Dolphin's User folder; empty = look for it
+    "emulators.dolphin.executable": ("", _path(), False),
 
     "advanced.request_timeout": (30, _int_range(5, 300), False),
     "advanced.debug": (False, _bool, False),

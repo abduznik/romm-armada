@@ -52,6 +52,17 @@ A token without `firmware.read` is refused with a clear message, which the BIOS 
   save this device already took from another slot.
 - A save in **no slot** is never offered by the negotiation (below).
 - The `content_hash` of a zip is computed from its entries: see [save-formats.md](save-formats.md).
+- RomM puts a timestamp before the last extension of an upload's name: `Game.srm` is stored as `Game [<time>].srm`, and the
+  zip `Game.srm.zip` as `Game.srm [<time>].zip`.
+
+## Save states
+
+RomM's states are a separate API from saves, with no slots, devices or negotiation. `POST /api/states?rom_id=&emulator=`
+(multipart `stateFile`, optional `screenshotFile`) stores the file under the emulator's folder and **replaces the row of the
+same file name**; `GET /api/states?rom_id=` lists them (`id`, `file_name`, `emulator`, `file_size_bytes`, `updated_at`; no content
+hash); `GET /api/states/{id}/content` downloads one. The same calls exist on 5.0.0 and 5.4.1. With no hash and no device record,
+the plugin keeps its own record of what it last synced (a hash of the local file and RomM's `updated_at`) and compares RomM's
+timestamp with the one it recorded. Scope: `assets.read` and `assets.write`, which the plugin already asks for.
 
 ## The sync negotiation
 

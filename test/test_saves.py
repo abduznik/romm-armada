@@ -276,8 +276,8 @@ class SafetyTests(SyncBase):
         self.assertEqual(calls, [1])
 
     def test_unsupported_system(self):
-        pid = self.mock.add_platform("snes", "Super Nintendo")
-        rid = self.mock.add_rom(pid, "Some SNES Game", [("Some SNES Game.sfc", b"rom")])
+        pid = self.mock.add_platform("n64", "Nintendo 64")          # a system no emulator here saves for
+        rid = self.mock.add_rom(pid, "Some N64 Game", [("Some N64 Game.z64", b"rom")])
         with self.a.active():
             self.a.install(rid)
             r = self.a.sync.sync([rid])[0]

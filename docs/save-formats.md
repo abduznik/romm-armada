@@ -13,6 +13,13 @@ What can be on RomM for a PlayStation 2 save, which of it this plugin writes, wh
 | **Memory card image in a zip** | Older Freegosy uploads | A zip that carries a `.ps2` of 4 MiB or more | yes, through sigil, only this game's saves | no |
 | **Whole shared `.ps2` card** | Any client | A plain `.ps2` holding many games | yes, through sigil, only this game's saves | no |
 
+**RetroArch (file saves)** are a different family: the `.srm` as it is (RomM stores it as `<game> [<time>].srm`), or a
+flat zip of `<game>.srm` and `<game>.rtc` (stored as `<game>.srm [<time>].zip`) when the game has a clock. RomM hashes the
+first by its bytes and the zip by its entries. A restore reads a flat zip's `.srm` and `.rtc` (other entries, such as save
+states, are ignored), or takes a plain file as the `.srm`, and writes them under this device's game name. Anything with no
+`.srm` (a PS2 folder zip, an empty file) is refused and skipped, and nothing changes. See
+[experiments.md](experiments.md), entry 15.
+
 A save that cannot be read is skipped once, with the reason on screen, and its id is remembered so it is not asked for
 again. A save state filed as a save (`.state`, `.p2s`) is never taken for a memory card save.
 

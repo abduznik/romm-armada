@@ -95,6 +95,7 @@ class MockRomm:
         self.devices: dict[str, dict] = {}
         self.syncs: dict[tuple[str, int], dict] = {}
         self.saves: list[dict] = []
+        self.states: list[dict] = []          # RomM's save states: one row per (rom, file name), re-uploading a name replaces it
         self.sessions: dict[int, dict] = {}
         self.play_sessions: list[dict] = []
         self.install_requests: list[dict] = []
@@ -401,6 +402,18 @@ class MockRomm:
             self.auth(h, "firmware.read")
             fw = self.firmware.get(int(m.group(1))) or self._404("Firmware")
             return self.send_blob(h, fw["data"])
+        # --- states
+        if path == "/api/states" and method == "GET":
+            self.auth(h, "assets.read")
+            return self.j([self.state_schema(x) for x in self.states if g("rom_id") is None or x["rom_id"] == int(g("rom_id"))])
+        if path == "/api/states" and method == "POST":
+            self.auth(h, "assets.write")
+            return self.add_state(h, q, body)
+        m = re.fullmatch(r"/api/states/(\d+)/content", path)
+        if m:
+            self.auth(h, "assets.read")
+            x = next((x for x in self.states if x["id"] == int(m.group(1))), None) or self._404("State")
+            return 200, {"Content-Type": "application/octet-stream"}, x["data"]
         # --- saves
         if path == "/api/saves" and method == "GET":
             self.auth(h, "assets.read")
@@ -585,6 +598,35 @@ class MockRomm:
                 ses["ops"] = ses.get("ops", 0) + 1
         self._prune(rom_id, slot, q, emulator)
         return self.j(self.save_schema(s, device_id))
+
+    def state_schema(self, x):
+        return {k: x[k] for k in ("id", "rom_id", "file_name", "emulator", "file_size_bytes", "updated_at")} | {
+            "download_path": f"/api/states/{x['id']}/content"}
+
+    def add_state(self, h, q, body):
+        rom_id = int((q.get("rom_id") or [0])[0])
+        if rom_id not in self.roms:
+            raise Fail(404, f"ROM with id {rom_id} not found")
+        emulator = (q.get("emulator") or [None])[0]
+        m = re.search(r"boundary=(.+)", h.headers.get("Content-Type", ""))
+        if not m:
+            raise Fail(422, "multipart body expected")
+        data = name = None
+        for part in body.split(b"--" + m.group(1).encode()):
+            if b'name="stateFile"' in part:
+                head, _, rest = part.partition(b"\r\n\r\n")
+                name = re.search(rb'filename="([^"]*)"', head).group(1).decode()
+                data = rest[:-2] if rest.endswith(b"\r\n") else rest
+        if data is None:
+            raise Fail(422, "stateFile missing")
+        row = next((x for x in self.states if x["rom_id"] == rom_id and x["file_name"] == name), None)
+        if row:
+            row.update(data=data, updated_at=self.now(), file_size_bytes=len(data), emulator=emulator)
+        else:
+            row = {"id": self._id(), "rom_id": rom_id, "file_name": name, "emulator": emulator, "data": data,
+                   "updated_at": self.now(), "file_size_bytes": len(data)}
+            self.states.append(row)
+        return self.j(self.state_schema(row))
 
     def _prune(self, rom_id, slot, q, emulator):
         if not slot or (q.get("autocleanup") or ["false"])[0] != "true":

@@ -19,7 +19,12 @@ export type Settings = {
     backups: boolean; backup_keep: number; autocleanup: boolean; autocleanup_limit: number; playtime: boolean;
     notify: boolean;
   };
-  emulators: { ps2: { emulator: "auto" | "armsx2" | "pcsx2"; data_dir: string; executable: string } };
+  states: { enabled: boolean };
+  emulators: {
+    ps2: { emulator: "auto" | "armsx2" | "pcsx2"; data_dir: string; executable: string };
+    retroarch: { data_dir: string; save_dir: string; executable: string };
+    dolphin: { data_dir: string; executable: string };
+  };
   advanced: { request_timeout: number; debug: boolean };
 };
 
@@ -32,6 +37,18 @@ export type CardInfo = {
 export type EmulatorInfo = {
   name: string; id: string; data_dir: string; data_dir_exists: boolean; found_by: string; executable: string;
   running: boolean; card: CardInfo; bios: { dir: string; has_bios: boolean; count: number };
+};
+
+/** RetroArch: whether it is there, where its saves go, and how many installed games use it. */
+export type RetroArchInfo = {
+  name: string; data_dir: string; data_dir_exists: boolean; found_by: string; executable: string; present: boolean; games: number;
+  save_dir: string; next_to_game: boolean; sort_by_core: boolean; sort_by_content: boolean; running: boolean;
+};
+
+/** Dolphin: whether it is there, where its User folder is, and how many installed GameCube games use it. */
+export type DolphinInfo = {
+  name: string; data_dir: string; data_dir_exists: boolean; found_by: string; executable: string; present: boolean; games: number;
+  raw_card: boolean; running: boolean;
 };
 
 export type Conflict = {
@@ -49,6 +66,8 @@ export type Overview = {
   library: { root: string; free: number; total: number; installed: number; installed_size: number };
   downloads: { active: number; total: number; failed: number };
   emulator: EmulatorInfo;
+  retroarch?: RetroArchInfo;
+  dolphin?: DolphinInfo;
   saves: { enabled: boolean; conflicts: Conflict[]; card_type: string };
   helper: { ok: boolean; arch?: string; helper?: string; sigil?: string; error?: string };
 };
@@ -78,7 +97,7 @@ export type SyncResult = {
 };
 
 /** The card image RomM keeps for a game: its size and the game saves inside it (`bytes` is the data they take). */
-export type SaveUnit = { kind?: "folders" | "card"; size: number; contents: string[]; bytes: number };
+export type SaveUnit = { kind?: "folders" | "card" | "file"; size: number; contents: string[]; bytes: number };
 
 export type SyncStatus = {
   rom_id: number; supported: boolean; enabled?: boolean; emulator?: string; data_dir?: string; data_dir_exists?: boolean;

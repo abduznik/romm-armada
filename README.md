@@ -14,6 +14,10 @@ server.
   takes the **newest save for the game from any slot**, whoever made it (this plugin,
   [Freegosy](https://github.com/abduznik/Freegosy), [Argosy](https://github.com/rommapp/argosy-launcher), another
   handheld), whatever shape it comes in.
+- **Syncs RetroArch saves** the same way for Game Boy, Game Boy Color, Game Boy Advance, NES, Super Nintendo, Mega Drive,
+  Master System and Game Gear games: the `<game>.srm` (and its `.rtc` clock) that RetroArch keeps per game.
+- **Syncs GameCube saves** with Dolphin: the game's `.gci` files, found from the disc's game id.
+- **Syncs save states** (the quick saves: ARMSX2/PCSX2 `.p2s`, Dolphin `.s01`, RetroArch `.state`) to RomM's own states area.
 - **Fetches the BIOS from RomM** into the emulator's BIOS folder, only when you ask.
 - **Arm64 first.** The helper that does the save work ships as a static aarch64 executable, with an x86-64 build as the
   fallback for a Steam Deck or for Decky running under FEX.
@@ -29,7 +33,7 @@ to find: [save formats](docs/save-formats.md), [RomM API behaviour by version](d
 
 ## Install
 
-Download `RomM-Armada-0.3.2.zip` from the [latest release](https://github.com/abduznik/romm-armada/releases/latest)
+Download `RomM-Armada-0.4.0.zip` from the [latest release](https://github.com/abduznik/romm-armada/releases/latest)
 (its sha256 is in the release notes), or build the zip yourself from this source (see [Build and test](#build-and-test)).
 Then, on the handheld: Decky menu → Settings → Developer → *Install Plugin from Zip* → pick the zip, and open the plugin
 from the Quick Access Menu.
@@ -98,6 +102,41 @@ mode Argosy uses on Android. A restore writes only that game's save folders. Eac
 - A file card **with** saves is never touched: convert it in the emulator (Settings → Memory Cards → Convert), or set
   *Card type* to *Use what the emulator has* (saves then travel as card images).
 
+## RetroArch saves
+
+For the 8-bit and 16-bit systems above, RetroArch keeps one battery save per game: `<game>.srm`, plus `<game>.rtc` for a
+cart with a clock, named after the game's file. That file is what goes to RomM, as Argosy sends it: the `.srm` as it is,
+or a zip of the two when there is a clock. Everything in [Saves and the memory card](#saves-and-the-memory-card) applies
+(upload when RetroArch closes, newest save from any slot pulled while it is not running, no replacement on a guess, a
+backup before anything is written, the `armadaos` slot).
+
+- **Where the saves are** comes from RetroArch's own `retroarch.cfg` (`~/.config/retroarch`, or its Flatpak folder):
+  `savefile_directory`, saves next to the game, and sorting into a folder per core or per game folder. A save that already
+  exists is found wherever it is. *Settings → Emulator → RetroArch* shows what was found and has fields for the data
+  folder, the save folder and the program when detection is wrong.
+- **Sorted by core:** the core's folder is not known until a game has been played once, so a game without a save says so
+  and waits (or turn off *Sort Saves into Folders by Core Name* in RetroArch).
+- **Not covered:** systems whose cores keep memory cards or folders (PlayStation, Nintendo DS, Nintendo 64, Dreamcast…),
+  and RetroArch's save states, which are never synced. They need a layout per core.
+
+## Dolphin saves (GameCube)
+
+sigil reads the game id off the disc and moves that game's `.gci` save files, from Dolphin's GCI folder (`GC/<region>/Card A/`)
+or out of a raw memory card, as one unit; the unit is what RomM keeps, as for Argosy. The usual rules apply (see
+[Saves and the memory card](#saves-and-the-memory-card)). Dolphin's User folder is found in the Flatpak's data folder
+(or `~/.local/share/dolphin-emu`, `~/.dolphin-emu`), and the card type and size are read from `Dolphin.ini`. Slot B and Wii
+saves are not covered yet. *Settings → Emulator → Dolphin* shows what was found.
+
+## Save states
+
+RomM keeps save states apart from saves: one row per game and file name, no slots, no version history, filed under the
+emulator's name. The plugin uses that, with the file names the emulators use (`SLUS-21269 (28703748).01.p2s`, `GZLE01.s01`,
+`Game.state1`). For each file: new or changed here → uploaded; only on RomM → downloaded once (and not again if you delete it
+here); newer on RomM → replaces the local file after a copy is kept aside; changed on both sides → left alone and said so.
+Nothing is deleted anywhere. A state only means something to the emulator build that made it, so states travel between
+devices that run the same emulator. *Settings → Saves → Sync save states* turns it off. RetroArch states in a folder per core
+need one state made first, as for its saves.
+
 ## BIOS files
 
 A PS2 emulator cannot start a game without a BIOS. When the emulator's BIOS folder has none, the home screen says so
@@ -145,6 +184,7 @@ The short version (the full story, with the numbers, is in [docs/experiments.md]
 | Which one should this plugin send? | The folders, like the clients it lives next to, and the card image only for servers that ask for it. The hash RomM gives a zip is computed locally too and was checked against real servers. |
 | Why did a save made by another client never arrive? | The plugin only looked in its own slot. RomM's negotiation offers other slots' newest saves, and Freegosy takes the newest of all slots. Now so does this plugin. |
 | Can a `.ps2` already on RomM be used without uploading `.ps2` again? | Yes. sigil restores one game out of a whole shared card; the plugin reads it, takes that game only, and says what is on the card when the game is not there. |
+| Can sigil's own sync handle a Game Boy Advance or Super Nintendo save? | No: its collect and restore cover only the systems it can read a game id for. Its default libretro row (`<game>.srm`, `<game>.rtc`) is simple enough to follow directly, and the plugin does, matching what Argosy uploads. |
 | Why did controller navigation die after "Show more"? | Steam drops the controller focus from a button that turns disabled or leaves the screen. No button disables itself while it works now, and a long list inserts the new games below the row that was pressed. |
 
 ## Where things live
@@ -153,6 +193,8 @@ The short version (the full story, with the numbers, is in [docs/experiments.md]
 |---|---|
 | Games | `Settings → Games and downloads → Download location` (default `~/ROMs/<system>/`; ES-DE names like `ps2`, `psx`, `gc`) |
 | ARMSX2 data | `~/.config/ARMSX2` (or `$XDG_CONFIG_HOME/ARMSX2`); PCSX2: `~/.config/PCSX2` |
+| Dolphin User folder | the Flatpak's `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu` (or `~/.local/share/dolphin-emu`); saves in its `GC` folder |
+| RetroArch data and saves | `~/.config/retroarch` (or its Flatpak folder); the save folder is what `retroarch.cfg` says |
 | BIOS files | `<data folder>/bios` unless the emulator's `PCSX2.ini` says otherwise |
 | Backups of replaced BIOS files | `~/homebrew/data/romm-armada/backups/bios/` |
 | Plugin settings, per-game sync records | `~/homebrew/settings/romm-armada/` |
@@ -167,7 +209,7 @@ Everything is under the plugin's **Settings**: download location (home, SD card,
 folder naming, extras, checksum mode, simultaneous downloads, speed limit, free space to keep, unpacking `.zip`,
 resuming after restart, accepting games sent from RomM's web page; saves on/off, slot name, save format, when to upload
 and pull, conflict policy, memory card type, backups, versions kept on RomM, play-time reporting, notifications; which
-PS2 emulator and where its data folder is; device name and certificate checking.
+PS2 emulator and where its data folder is, and where RetroArch's and Dolphin's folders are; device name and certificate checking.
 
 ## Build and test
 
@@ -190,18 +232,18 @@ ARMADA_HOST=armada@<handheld address> scripts/send-to-armada.sh      # copy the 
 
 **By machine**
 
-- Against **a real RomM, 5.4.1 and 5.0.0** (`test/test_real_romm.py`, 10 checks each): pairing with a real code (works
+- Against **a real RomM, 5.4.1 and 5.0.0** (`test/test_real_romm.py`, 12 checks each): pairing with a real code (works
   once, the 5-a-minute limit is explained, a token without the right permissions is explained), approving a code shown
   on the device, listing the library, a real download checked against RomM's CRC32, a save uploaded as a zip of the
   game's save folders in the `armadaos` slot whose RomM `content_hash` equals the one the plugin computed, a second
   device restoring it onto a folder card, the card image format against the real server, "first contact" and "keep
-  both" conflict handling, play time reaching RomM, a Freegosy-shaped save in its own slot pulled as the latest while
+  both" conflict handling, play time reaching RomM, a Freegosy-shaped save in its own slot pulled as the latest, a RetroArch save and a PS2 save state moving between two devices, while
   the handheld's next save goes to the `armadaos` slot, and firmware uploaded, listed, downloaded and checked into the
   BIOS folder (with the server's refusal of a sign-in that lacks the firmware permission).
 - The save helper on **x86-64 and aarch64 (qemu)**: identical units and hashes; builds reproduce exactly.
-- 220 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every archive
-  shape, BIOS install, the watcher, remote installs, the Decky RPC layer under a stand-in for Decky's module) and 24
-  rendered panel scenarios (typed pairing code, device approval, browsing, downloading, conflicts, BIOS files,
+- 264 backend tests (downloads with resume and corruption, save sync in both formats and across slots, every archive
+  shape, RetroArch saves, BIOS install, the watcher, remote installs, the Decky RPC layer under a stand-in for Decky's
+  module) and 25 rendered panel scenarios (typed pairing code, device approval, browsing, downloading, conflicts, BIOS files,
   settings, disconnecting). The panel also type-checks against `@decky/ui` 4.11.
 
 **On a handheld** (Retroid Nova, Armada OS, ARMSX2, RomM 5.0.0): pairing by code, downloading games, ARMSX2 using the
@@ -214,7 +256,12 @@ ARMSX2 holds open, and a save made by Freegosy on a PC restored on the handheld 
   "Show more" fix follows how Steam treats focus and was checked in a simulated panel, not in Steam itself.
 - RomM 5.5 and newer: the card image path for servers that keep units is tested against a stand-in for the heartbeat
   flag, not against a real 5.5 server.
-- ES-DE starting a downloaded game, and emulators other than ARMSX2 and PCSX2.
+- Dolphin on a handheld: it was installed but not yet run when this was written, so its real folders and saves have not
+  been seen; the tests use a synthetic disc and `.gci` file through the real helper.
+- RetroArch on a handheld: where Armada OS's RetroArch keeps its saves has not been looked at yet (the plugin reads
+  `retroarch.cfg`, and the tests cover the ways RetroArch can be set up), and no real RetroArch has run a game against the
+  plugin.
+- ES-DE starting a downloaded game, and emulators other than ARMSX2, PCSX2 and RetroArch.
 
 ## Repository layout
 

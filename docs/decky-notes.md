@@ -35,6 +35,30 @@ Facts about the places this plugin runs in, found by reading their code and by l
 - **argosy-sigil layout:** `pcsx2_standalone`. sigil sees a folder card only when there are files under
   `memcards/<card>/`, so a blank folder card needs a formatted `_pcsx2_superblock`.
 
+## RetroArch
+
+- **Data folder:** `~/.config/retroarch` (or `$XDG_CONFIG_HOME/retroarch`, the Flatpak `~/.var/app/org.libretro.RetroArch/config/retroarch`,
+  or `~/.retroarch`); the settings are in `retroarch.cfg`, `key = "value"` per line.
+- **Saves:** `savefile_directory` (empty or `default` means next to the game; `:/x` is under the config folder),
+  `savefiles_in_content_dir`, `sort_savefiles_enable` (a folder per core) and `sort_savefiles_by_content_enable` (a folder
+  named after the game's folder). The file is `<game's file name without its extension>.srm`, and `.rtc` beside it.
+- **Process:** `retroarch` (also `retroarch.AppImage`, `retroarch-bin`). A launcher starts it as
+  `retroarch -L <core>_libretro.so <game>`, so the game is the last argument that is a file. Started from RetroArch's own
+  menu there is no game on the command line, and every installed RetroArch game is checked on exit, uploading only the ones
+  whose save changed.
+- **Not looked at yet on a real handheld:** where Armada OS puts RetroArch and its saves.
+
+## Dolphin
+
+- **User folder:** the Flatpak keeps it at `~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu` (with `GC/` and `Wii/`),
+  and `Dolphin.ini` at `.../config/dolphin-emu/`. Without the Flatpak: `~/.local/share/dolphin-emu` and `~/.config/dolphin-emu`,
+  or everything under `~/.dolphin-emu`.
+- **Saves:** `GC/<USA|EUR|JAP>/Card A/<maker>-<game id>-<name>.gci` (`[Core] SlotA = 8`, the default), or
+  `GC/MemoryCardA.<region>.raw` (`SlotA = 1`; `MemoryCardSize` sets its size). sigil's layout is `dolphin_standalone`, rooted
+  at the User folder. A restore into a GCI folder fills in the entry's start block, so a restored file differs from the
+  uploaded one in that field only.
+- **Process:** `dolphin-emu`, started by a launcher as `dolphin-emu -b -e <game>`.
+
 ## The panel in Steam's Quick Access Menu
 
 The panel is React against `@decky/ui` and lives only in the Quick Access Menu. The lessons that cost time:

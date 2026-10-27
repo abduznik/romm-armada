@@ -105,6 +105,18 @@ def crc_matches(expected: str, actual: int) -> bool:
         return True  # a hash we cannot read is not a reason to throw the file away
 
 
+def zip_member_crcs(path: str) -> set[int] | None:
+    """The CRC32 of each file inside a zip, from a zip that reads back whole. RomM lists the CRC of one file inside a zipped
+    game (the first), not of the zip, and some zips hold a dozen versions of the game. None when the zip is damaged."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            if zf.testzip() is not None:
+                return None
+            return {i.CRC for i in zf.infolist() if not i.is_dir()}
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
+        return None
+
+
 def crc_of_file(path: str) -> int:
     crc = 0
     with open(path, "rb") as f:
@@ -473,8 +485,14 @@ class DownloadManager:
             self._drop_part(f)
             raise RommError("server", f"{f.name} is larger than RomM says; downloading it again may help")
         if verify == "crc" and f.crc and not crc_matches(f.crc, crc):
-            self._drop_part(f)
-            raise RommError("server", f"{f.name} did not match RomM's checksum; try the download again")
+            inner = zip_member_crcs(f.part) if f.name.lower().endswith(".zip") else None
+            if inner is not None and any(crc_matches(f.crc, m) for m in inner):
+                log.info("%s matches RomM's checksum of a file inside the zip", f.name)
+            else:
+                log.warn("%s: RomM lists crc %s, the download has %08x%s", f.name, f.crc, crc,
+                         " and its files have " + ", ".join("%08x" % m for m in sorted(inner)[:4]) if inner else "")
+                self._drop_part(f)
+                raise RommError("server", f"{f.name} did not match RomM's checksum; try the download again")
         os.replace(f.part, f.dest)
         f.done = size
 

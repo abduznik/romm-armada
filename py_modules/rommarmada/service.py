@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import bios, emulators, library as lib, log, paths, saves as savesmod
+from . import bios, emulators, libretro, library as lib, log, paths, saves as savesmod
 from .config import Settings
 from .connect import PLUGIN_VERSION, ConnectError, Connector, romm_hostname
 from .downloads import ACTIVE, DownloadManager
@@ -114,6 +114,8 @@ class Service:
             "downloads": {"active": sum(1 for j in jobs if j["state"] in ACTIVE), "total": len(jobs),
                           "failed": sum(1 for j in jobs if j["state"] == "error")},
             "emulator": self._emulator_view(resolved, cfg),
+            "retroarch": self._retroarch_view(),
+            "dolphin": self._dolphin_view(),
             "saves": {"enabled": s.get("saves.enabled"), "conflicts": conflicts, "card_type": s.get("saves.card_type")},
             "helper": self._helper_view(),
         }
@@ -122,6 +124,28 @@ class Service:
         rec = savesmod.Record(rom_id)
         c = rec.doc.get("conflict")
         return c if c else None
+
+    def _retroarch_view(self) -> dict:
+        """What the screens say about RetroArch: whether it is there, where its saves go, and how many installed games use it."""
+        s = self.settings
+        r = libretro.resolve(s.get("emulators.retroarch.data_dir"), s.get("emulators.retroarch.save_dir"),
+                             s.get("emulators.retroarch.executable"))
+        c = r.config
+        games = sum(1 for g in self.manifest.all() if emulators.group_for_platform(g.get("platform_slug", "")) == "retroarch")
+        return {"name": r.profile.name, "data_dir": str(r.data_dir), "data_dir_exists": r.data_dir_exists, "found_by": c.why,
+                "executable": r.executable, "present": bool(r.executable or c.cfg_exists), "games": games,
+                "save_dir": str(c.save_dir) if c.save_dir else "", "next_to_game": c.save_dir is None,
+                "sort_by_core": c.sort_by_core, "sort_by_content": c.sort_by_content,
+                "running": bool(emulators.find_instances(r.profile.process_names, self.proc_root))}
+
+    def _dolphin_view(self) -> dict:
+        s = self.settings
+        r = emulators.resolve_dolphin(s.get("emulators.dolphin.data_dir"), s.get("emulators.dolphin.executable"))
+        games = sum(1 for g in self.manifest.all() if emulators.group_for_platform(g.get("platform_slug", "")) == "dolphin")
+        opts = emulators.dolphin_options(r.data_dir)
+        return {"name": r.profile.name, "data_dir": str(r.data_dir), "data_dir_exists": r.data_dir_exists, "found_by": r.why,
+                "executable": r.executable, "present": bool(r.executable or r.data_dir_exists), "games": games,
+                "raw_card": opts.get("SlotA") == "1", "running": bool(emulators.find_instances(r.profile.process_names, self.proc_root))}
 
     def _emulator_view(self, r: emulators.Resolved, cfg: emulators.CardConfig) -> dict:
         s1 = cfg.slots[0]
@@ -334,7 +358,7 @@ class Service:
     def uninstall(self, rom_id: int) -> dict:
         game = self.manifest.get(rom_id)
         if game:
-            for inst in emulators.find_instances(emulators.all_ps2_process_names(), self.proc_root):
+            for inst in emulators.find_instances(emulators.all_process_names(), self.proc_root):
                 # on its command line, or (started from the emulator's own menu) the disc image it holds open
                 held = ([inst.rom_path()] if inst.rom_path() else []) + inst.open_files()
                 if any(g["rom_id"] == rom_id for _, g in self.manifest.by_paths(held)):
@@ -352,8 +376,9 @@ class Service:
         def work() -> None:
             try:
                 if emulators.group_for_platform(entry.get("platform_slug", "")) and entry.get("main_file"):
-                    ident = self.bridge.identify(entry["main_file"], "ps2")
-                    self.manifest.update(rid, identity=ident, title_id=ident.get("title_id"))
+                    if savesmod.emulators_platform(entry):          # a PS2 or GameCube disc: sigil reads its id (RetroArch games need none)
+                        ident = self.bridge.identify(entry["main_file"], savesmod.emulators_platform(entry))
+                        self.manifest.update(rid, identity=ident, title_id=ident.get("title_id"))
                     if self.settings.get("saves.enabled") and self.settings.get("saves.pull_when_idle"):
                         self.saves.sync([rid], trigger="install")
             except (SigilRefusal, SavebridgeError) as e:
@@ -571,6 +596,8 @@ class Service:
                       "backups": str(paths.backups_dir())},
             "emulator": {"name": r.profile.name, "data_dir": str(r.data_dir), "ini": str(r.ini), "ini_exists": r.ini.exists(),
                          "executable": r.executable, "found_by": r.why},
+            "retroarch": self._retroarch_view(),
+            "dolphin": self._dolphin_view(),
             "library_free": human_bytes(free_bytes(s.get("library.root"))),
             "saves": self._saves_view(),
         }

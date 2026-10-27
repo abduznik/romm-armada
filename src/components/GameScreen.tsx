@@ -207,15 +207,19 @@ export function GameScreen({ nav, id }: { nav: Nav; id: number }) {
           {saves.last?.unit && saves.last.unit.size > 0 ? (
             <>
               <Info label="RomM keeps">
-                {`${bytes(saves.last.unit.size)} ${saves.last.unit.kind === "folders" ? "zip of save folders" : "card image"}: ${
-                  saves.last.unit.contents.length
-                    ? `${saves.last.unit.contents.join(", ")}, ${bytes(saves.last.unit.bytes)} of save data`
-                    : "no saves"
-                }`}
+                {saves.last.unit.kind === "file"
+                  ? `${bytes(saves.last.unit.size)} save file${saves.last.unit.contents.length ? `: ${saves.last.unit.contents.join(", ")}` : ""}`
+                  : `${bytes(saves.last.unit.size)} ${saves.last.unit.kind === "folders" ? "zip of save folders" : "card image"}: ${
+                      saves.last.unit.contents.length
+                        ? `${saves.last.unit.contents.join(", ")}, ${bytes(saves.last.unit.bytes)} of save data`
+                        : "no saves"
+                    }`}
               </Info>
               <PanelSectionRow>
                 <Muted>
-                  {saves.last.unit.kind === "folders"
+                  {saves.last.unit.kind === "file"
+                    ? "RomM keeps this game's save file as the emulator wrote it (RetroArch's .srm, with its .rtc clock in a zip when it has one; Dolphin's .gci files), the way Argosy does."
+                    : saves.last.unit.kind === "folders"
                     ? "RomM keeps this game's save folders in a zip, the way Argosy and Freegosy do. Only this game's folders are in it. The card on this device stays a folder card."
                     : "RomM keeps this game's save as a standard memory card image, the format RomM 5.5 and newer and sigil use. It holds only this game's save. The card on this device stays a folder card."}
                 </Muted>

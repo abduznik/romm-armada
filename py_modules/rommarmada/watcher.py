@@ -123,7 +123,7 @@ class Watcher:
         return None, None, ""
 
     def _watch_emulator(self) -> None:
-        found = emulators.find_instances(emulators.all_ps2_process_names(), self.svc.proc_root)
+        found = emulators.find_instances(emulators.all_process_names(), self.svc.proc_root)
         if found and self.session is None:
             inst = found[0]
             rom, game, how = self._identify(found)

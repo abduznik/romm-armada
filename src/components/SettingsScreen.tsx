@@ -243,6 +243,7 @@ function SavesSettings({ nav }: { nav: Nav }) {
       </PanelSection>
 
       <PanelSection title="Extras">
+        <Toggle st={st} path="states.enabled" label="Sync save states" description="Quick saves go to RomM's states, one per file name; the newer one wins and nothing is deleted" />
         <Toggle st={st} path="saves.playtime" label="Send play time to RomM" />
         <Toggle st={st} path="saves.notify" label="Show notifications" description="Uploads, updates and decisions needed" />
       </PanelSection>
@@ -260,6 +261,8 @@ function EmulatorSettings({ nav }: { nav: Nav }) {
     if (r.ok) setOv(r);
   }, 5000, [st.s?.emulators.ps2.emulator, st.s?.emulators.ps2.data_dir]);
   const em = ov?.emulator;
+  const ra = ov?.retroarch;
+  const dol = ov?.dolphin;
   return (
     <>
       <BackBar nav={nav} title="Emulator" />
@@ -294,6 +297,36 @@ function EmulatorSettings({ nav }: { nav: Nav }) {
             BIOS files
           </ButtonItem>
         </PanelSectionRow>
+      </PanelSection>
+      <PanelSection title="RetroArch">
+        <Note>Game Boy, Game Boy Color, Game Boy Advance, NES, Super Nintendo and Sega Mega Drive, Master System and Game Gear saves.</Note>
+        {ra ? (
+          <>
+            <Info label="Data folder">{ra.data_dir}</Info>
+            <Info label="Found">{ra.data_dir_exists ? (ra.found_by === "setting" ? "set below" : "yes") : "not yet; run RetroArch once"}</Info>
+            <Info label="Saves">{ra.next_to_game ? "next to each game" : ra.save_dir}</Info>
+            {ra.sort_by_core || ra.sort_by_content ? (
+              <Info label="Sorted">{[ra.sort_by_core ? "by core" : "", ra.sort_by_content ? "by game folder" : ""].filter(Boolean).join(" and ")}</Info>
+            ) : null}
+            <Info label="Program">{ra.executable || "not found"}</Info>
+          </>
+        ) : null}
+        <Text st={st} path="emulators.retroarch.data_dir" label="Data folder" placeholder="empty = detect (~/.config/retroarch)" description="Where retroarch.cfg is" />
+        <Text st={st} path="emulators.retroarch.save_dir" label="Save folder" placeholder="empty = what retroarch.cfg says" description="Only if RetroArch's own setting is not the one it really uses" />
+        <Text st={st} path="emulators.retroarch.executable" label="Program" placeholder="empty = detect" />
+      </PanelSection>
+      <PanelSection title="Dolphin">
+        <Note>GameCube saves, as .gci files in Dolphin's memory card folder or on a raw card.</Note>
+        {dol ? (
+          <>
+            <Info label="User folder">{dol.data_dir}</Info>
+            <Info label="Found">{dol.data_dir_exists ? (dol.found_by === "setting" ? "set below" : "yes") : "not yet; run Dolphin once"}</Info>
+            <Info label="Memory card">{dol.raw_card ? "raw card file" : "GCI folder"}</Info>
+            <Info label="Program">{dol.executable || "not found"}</Info>
+          </>
+        ) : null}
+        <Text st={st} path="emulators.dolphin.data_dir" label="User folder" placeholder="empty = detect (the Flatpak's data/dolphin-emu)" description="The folder that holds GC and Wii" />
+        <Text st={st} path="emulators.dolphin.executable" label="Program" placeholder="empty = detect" />
       </PanelSection>
     </>
   );

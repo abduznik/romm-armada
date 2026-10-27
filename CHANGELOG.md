@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0
+
+- **RetroArch saves.** Games for Game Boy, Game Boy Color, Game Boy Advance, NES, Super Nintendo, Mega Drive, Master System
+  and Game Gear sync their battery saves with RomM. RetroArch keeps one `<game>.srm` (and a `<game>.rtc` for a cart with a
+  clock) per game in its save folder, and that file goes to RomM the way Argosy sends it: the `.srm` as it is, or a zip of
+  the two when there is a clock. RetroArch's folder is read from its `retroarch.cfg` (`savefile_directory`, saves next to
+  the game, sorting by core or by game folder); a save that already exists is found wherever it is. When RetroArch sorts
+  saves by core and a game has none yet, the game says to play it once first.
+- **Dolphin: GameCube saves.** sigil reads the disc's game id and moves that game's `.gci` files (from Dolphin's GCI folder,
+  or out of a raw memory card) as one unit, the way Argosy does. Dolphin's User folder is found in the Flatpak's data
+  folder (also `~/.local/share/dolphin-emu` and `~/.dolphin-emu`), and `SlotA` / `MemoryCardSize` are read from
+  `Dolphin.ini`. Wii saves and slot B are not covered yet.
+- The same rules as the PS2 saves apply to both: the newest save from any slot is pulled, nothing is replaced on a guess,
+  the old files are backed up first (and put back if writing fails), and the slot and tag are `armadaos`.
+- *Settings → Emulator* has a RetroArch and a Dolphin section (what was found, and fields to point at another folder). The
+  home screen counts the games for each, and the game screen says what RomM keeps.
+- A PS2 emulator running no longer holds back a Game Boy or GameCube sync, and the other way round; only the emulator that
+  plays the game does. The watcher recognises RetroArch and Dolphin.
+- Fixed: a game that RomM keeps as a `.zip` failed every download with "did not match RomM's checksum". RomM lists the CRC32
+  of one file inside a zipped game (the first), not of the zip, and some zips hold a dozen versions of the game. A zip that
+  reads back whole and holds a file with that CRC is accepted. Anything else is still refused, and the log says which
+  checksums it saw.
+- **Save states sync too.** RomM keeps states apart from saves (its *states*: one row per game and file name, no slots, no
+  history, filed under the emulator's own folder), and the plugin now uses that. ARMSX2 and PCSX2 (`SLUS-21269 (28703748).01.p2s`
+  in the `sstates` folder from `PCSX2.ini`), Dolphin (`GZLE01.s01` in `StateSaves`) and RetroArch (`<game>.state`,
+  `.state1`…, `.state.auto`, in its `savestate_directory`, sorted the way its config says) are covered. Per file: a state
+  that is new or changed here is uploaded; one that is only on RomM is downloaded (once: a state you deleted here does not
+  come back); one RomM has newer than the last sync replaces the local file after a copy of it is kept aside; one that
+  changed on both sides is left alone and the sync says so. Nothing is ever deleted, on either side. The emulator's other
+  files (`.backup`, thumbnails, the emulator's resume state) are not touched.
+  *Settings → Saves → Sync save states* turns it off.
+
 ## 0.3.2
 
 - "Show more": the row you pressed stays where it was and the next games load below it, so the selection is where you

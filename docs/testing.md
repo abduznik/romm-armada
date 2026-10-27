@@ -4,9 +4,9 @@ Five layers, from cheap to expensive. Each one exists because the cheaper ones c
 
 | Layer | Command | What it covers |
 |---|---|---|
-| Backend | `python3 -m pytest test` | 220 tests with an in-process RomM stand-in and the real `savebridge` helper |
-| Panel | `bash scripts/test-ui.sh` | 24 scenarios, the real panel rendered in jsdom against a scripted backend |
-| Real RomM | `ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s` | 10 checks against a real server and database in podman |
+| Backend | `python3 -m pytest test` | 264 tests with an in-process RomM stand-in and the real `savebridge` helper |
+| Panel | `bash scripts/test-ui.sh` | 25 scenarios, the real panel rendered in jsdom against a scripted backend |
+| Real RomM | `ROMM_REAL=1 python3 -m pytest test/test_real_romm.py -s` | 12 checks against a real server and database in podman |
 | Arm64 parity | part of the backend run, when `qemu-aarch64-static` is installed | the aarch64 helper under qemu gives the same units and hashes as x86-64 |
 | Install | `python3 scripts/smoke_install.py <zip>` | the zip loads the way Decky loads it and the first screen's data comes back |
 
@@ -17,7 +17,7 @@ Five layers, from cheap to expensive. Each one exists because the cheaper ones c
 - `fixtures.py` builds a minimal PS2 disc image (so sigil can read a game id), save zips of every shape, and a fake
   ARMSX2 data folder.
 - Test modules: `test_core` (settings, helper, pairing), `test_downloads` (resume, corrupted files, free space, queue),
-  `test_saves` (sync end to end with the real helper), `test_folders` (folder zips, every archive shape, cross-slot
+  `test_saves` (sync end to end with the real helper), `test_states` (save states in every emulator's layout, both directions, backups and conflicts), `test_dolphin`, `test_retroarch` (the save folder in every way RetroArch sorts saves, the unit checked against sigil's own `locate`, restores and rollback, two devices through the stand-in), `test_folders` (folder zips, every archive shape, cross-slot
   pulls, rollbacks), `test_bios`, `test_service` (the Decky RPC layer under a stand-in for Decky's module, the watcher,
   remote installs), `test_send_script`.
 - Everything runs in an isolated home folder; nothing touches the real one.
@@ -41,7 +41,7 @@ ROMM_REAL=1 ROMM_IMAGE=docker.io/rommapp/romm:5.0.0 python3 -m pytest test/test_
 
 The checks: pairing with a real code, a token without permissions being explained, device approval, library and a
 download verified against RomM's CRC32, a zip of save folders whose `content_hash` equals the local one and a second
-device restoring it, the card image format, conflicts, play time, the latest save pulled from any slot, and firmware
+device restoring it, the card image format, conflicts, play time, the latest save pulled from any slot, a Game Boy save and its clock through RetroArch's files, and firmware
 upload, listing, download and install into a BIOS folder. A failed start removes its containers so the port is free for
 the next run.
 

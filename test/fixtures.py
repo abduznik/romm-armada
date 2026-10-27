@@ -81,3 +81,25 @@ def write(path: str, data: bytes) -> str:
     with open(path, "wb") as f:
         f.write(data)
     return path
+
+
+def make_gc_iso(game_id: str = "GZLE") -> bytes:
+    """The start of a GameCube disc: its game id and the console magic sigil reads."""
+    iso = bytearray(1 << 20)
+    iso[0:4] = game_id.encode()
+    iso[0x1C:0x20] = bytes.fromhex("C2339F3D")
+    iso[0x20:0x29] = b"Test Game"
+    return bytes(iso)
+
+
+def make_gci(game_id: str = "GZLE", name: str = "TestSave", seed: int = 7) -> bytes:
+    """A one-block GameCube save file (.gci): the 0x40-byte entry and an 8 KiB block."""
+    import struct
+    hdr = bytearray(0x40)
+    hdr[0:4] = game_id.encode()
+    hdr[4:6] = b"01"
+    hdr[6] = 0xFF
+    hdr[8:8 + len(name)] = name.encode()
+    struct.pack_into(">H", hdr, 0x38, 1)
+    struct.pack_into(">H", hdr, 0x3A, 0xFFFF)
+    return bytes(hdr) + bytes((i * seed) & 255 for i in range(0x2000))

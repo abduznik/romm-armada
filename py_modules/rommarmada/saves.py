@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import emulators, log, paths, savefolders
+from . import emulators, libretro, log, paths, savefolders, states
 from .config import Settings
 from .library import Manifest
 from .romm import RommClient, RommError, describe
@@ -183,8 +183,8 @@ def list_backups(rom_id: int) -> list[dict]:
 @dataclass
 class Ctx:
     profile: emulators.Profile
-    data_dir: Path
-    cfg: emulators.CardConfig
+    data_dir: Path      # the emulator's data folder; for RetroArch, the folder this game's save lives in
+    cfg: emulators.CardConfig | None      # the memory cards (PS2); None for RetroArch, which has none
     options: dict
     executable: str
     card: dict          # what prepare_cards found or did
@@ -192,6 +192,18 @@ class Ctx:
     @property
     def root(self) -> str:
         return str(self.data_dir)
+
+
+def gci_mtime(root: Path, save_id: str) -> float:
+    """When this game's GameCube saves were last written: its .gci files, or the raw cards when Dolphin keeps those."""
+    best = 0.0
+    try:
+        for p in (root / "GC").rglob("*"):
+            if p.is_file() and (p.suffix.lower() == ".raw" or (save_id and f"-{save_id}-" in p.name)):
+                best = max(best, p.stat().st_mtime)
+    except OSError:
+        pass
+    return best
 
 
 def local_mtime(cfg: emulators.CardConfig, save_id: str) -> float:
@@ -226,6 +238,7 @@ class SaveSync:
         self.emit = emit or (lambda event, payload: None)
         self.reregister = reregister
         self._lock = threading.RLock()
+        self.states = states.StateSync(settings, get_client, self.identity)
         self._caps: tuple[float, bool, bool] | None = None      # when the server was asked, whether it keeps units, whether it answered
 
     # -- context ----------------------------------------------------------------------------------------
@@ -239,7 +252,8 @@ class SaveSync:
         return r, "ps2"
 
     def emulator_running(self, game: dict | None = None) -> bool:
-        return bool(emulators.find_instances(emulators.all_ps2_process_names(), self.proc_root))
+        group = emulators.group_for_platform((game or {}).get("platform_slug", ""))
+        return bool(emulators.find_instances(emulators.process_names_for(group), self.proc_root))
 
     def prepare_cards(self, r: emulators.Resolved, serial: str | None) -> tuple[emulators.CardConfig, dict]:
         """Makes sure the memory card is the kind the settings ask for. Returns the card config and a note."""
@@ -300,6 +314,11 @@ class SaveSync:
     def context(self, game: dict) -> Ctx | dict:
         """The emulator context for a game, or a result dict that says why there is none."""
         rid, name = game["rom_id"], game.get("name", "")
+        group = emulators.group_for_platform(game.get("platform_slug", ""))
+        if group == "retroarch":
+            return self._retroarch_context(game)
+        if group == "dolphin":
+            return self._dolphin_context(game)
         got = self._emulator_for(game)
         if not got:
             return result(rid, name, "unsupported", "Save sync is not set up for this system yet")
@@ -314,6 +333,24 @@ class SaveSync:
         if card.get("state") == "blocked":
             return result(rid, name, "blocked", card["message"], reason=card.get("reason"))
         return Ctx(r.profile, r.data_dir, cfg, emulators.sigil_options(cfg), r.executable, card)
+
+    def _retroarch_context(self, game: dict) -> Ctx | dict:
+        rid, name = game["rom_id"], game.get("name", "")
+        s = self.settings
+        main = game.get("main_file") or ""
+        if not main:
+            return result(rid, name, "error", "This game has no file on this device")
+        r = libretro.resolve(s.get("emulators.retroarch.data_dir"), s.get("emulators.retroarch.save_dir"),
+                             s.get("emulators.retroarch.executable"))
+        root, why = libretro.save_root(r.config, main)
+        if root is None:
+            return result(rid, name, "blocked", why, reason="core_folder")
+        return Ctx(r.profile, root, None, {}, r.executable, {"state": "ok", "kind": "file"})
+
+    def _dolphin_context(self, game: dict) -> Ctx | dict:
+        s = self.settings
+        r = emulators.resolve_dolphin(s.get("emulators.dolphin.data_dir"), s.get("emulators.dolphin.executable"))
+        return Ctx(r.profile, r.data_dir, None, emulators.dolphin_options(r.data_dir), r.executable, {"state": "ok", "kind": "gci"})
 
     # -- identity ----------------------------------------------------------------------------------------
 
@@ -357,6 +394,10 @@ class SaveSync:
     def _format(self, ctx: Ctx) -> str:
         """folders (a zip of the game's save folders) or card (sigil's per-game memory card image) for this device and server.
         Save folders are the default; automatic follows the server, and a file memory card can only be read as a card image."""
+        if ctx.profile.family == "libretro":
+            return "file"          # a battery save is one file (two with a clock), named after the game
+        if ctx.profile.family == "dolphin":
+            return "card"          # sigil's unit: the game's .gci files, whether Dolphin keeps a GCI folder or a raw card
         wanted = self.settings.get("saves.format")
         if wanted == "card":
             return "card"
@@ -369,6 +410,13 @@ class SaveSync:
     # -- the pieces -------------------------------------------------------------------------------------------
 
     def _collect(self, ctx: Ctx, game: dict, rec: Record, work: Path) -> dict:
+        if ctx.profile.family == "libretro":
+            try:
+                return libretro.collect(Path(ctx.root), game.get("main_file") or "", work, rec.last)
+            except savefolders.ArchiveError as e:
+                raise FolderRefusal("damaged", str(e)) from None
+            except OSError as e:
+                raise FolderRefusal("io", str(e)) from None
         ident = self.identity(game)
         if self._format(ctx) == "folders":
             return self._collect_folders(ctx, game, ident, rec, work)
@@ -383,8 +431,12 @@ class SaveSync:
             state_in=rec.state_path, state_out=state_out)
         got["unit_path"] = str(out) if got.get("has_unit") else ""
         got["state_tmp"] = str(state_out) if got.get("has_state") else ""
-        got["mtime"] = local_mtime(ctx.cfg, ident.get("save_id", ""))
-        got["format"] = "card"
+        if ctx.cfg is None:
+            got["mtime"] = gci_mtime(Path(ctx.root), ident.get("save_id", ""))
+            got["format"] = "gci"
+        else:
+            got["mtime"] = local_mtime(ctx.cfg, ident.get("save_id", ""))
+            got["format"] = "card"
         return got
 
     @staticmethod
@@ -418,10 +470,20 @@ class SaveSync:
                    changed=not (rec.last and rec.last.get("local_hash") == built.content_hash))
         return got
 
-    def _unit_info(self, path: Path) -> dict:
+    def _unit_info(self, path: Path, fmt: str | None = None) -> dict:
         """What a unit is, for the screen: its size and the game saves inside it. A zip holds the game's save folders. A card
         image is sigil's per-game 8 MB memory card (the format RomM 5.5 and newer keep), and this says what is in it."""
         p = Path(path)
+        if fmt in ("file", "gci"):          # a RetroArch save (the .srm, or a zip of it and its .rtc) or Dolphin's .gci files
+            info = {"kind": "file", "size": 0, "contents": [], "bytes": 0}
+            try:
+                info["size"] = info["bytes"] = p.stat().st_size
+                if zipfile.is_zipfile(p):
+                    with zipfile.ZipFile(p) as zf:
+                        info["contents"] = [i.filename for i in zf.infolist() if not i.is_dir()]
+            except (OSError, zipfile.BadZipFile):
+                pass
+            return info
         try:
             if zipfile.is_zipfile(p):
                 return savefolders.describe(p)
@@ -460,10 +522,41 @@ class SaveSync:
         'server' | 'device' | 'keep_both'."""
         with self._lock:
             out = self._sync(rom_ids, trigger, resolutions or {}, only_if_changed)
+            self._sync_states(out, only_if_changed)
         for r in out:    # the log is what is read when a save did not arrive: say what each sync did and why
             say = log.debug if r.get("status") in QUIET_STATUSES and trigger != "manual" else log.info
             say("save sync (%s) %s: %s. %s", trigger, r.get("name") or r.get("rom_id"), r.get("status"), r.get("message", ""))
         return out
+
+    def _sync_states(self, results: list[dict], only_if_changed: bool = False) -> None:
+        """After the memory cards: the game's save states, when the setting allows. A failure here never turns a good save sync
+        into a bad one; it is only logged."""
+        if not self.settings.get("states.enabled"):
+            return
+        for r in results:
+            if r.get("status") in ("busy", "auth", "not_installed", "disabled", "paused", "offline"):
+                continue
+            game = self.manifest.get(r.get("rom_id"))
+            if not game or not emulators.group_for_platform(game.get("platform_slug", "")) or self.emulator_running(game):
+                continue
+            try:
+                rep = self.states.sync(game, only_if_changed)
+            except RommError as e:
+                log.debug("save states of %s not synced: %s", game.get("name"), e)
+                continue
+            except Exception:  # noqa: BLE001
+                log.exception("save states of %s failed", game.get("name"))
+                continue
+            if not rep:
+                continue
+            r["states"] = rep
+            bits = [f"{len(rep[k])} save state{'s' if len(rep[k]) != 1 else ''} {k}" for k in ("uploaded", "downloaded") if rep[k]]
+            if rep["left"]:
+                bits.append(f"{len(rep['left'])} left alone (changed here and on RomM)")
+            if bits:
+                r["message"] = f"{r.get('message', '')} · " + ", ".join(bits)
+            if rep["errors"]:
+                log.warn("save states of %s: %s", game.get("name"), "; ".join(rep["errors"][:3]))
 
     def _sync(self, rom_ids: list[int], trigger: str, resolutions: dict[int, str], only_if_changed: bool) -> list[dict]:
         s = self.settings
@@ -697,7 +790,7 @@ class SaveSync:
                 rec.doc["last"] = {"at": iso(), "action": "match", "local_hash": local["content_hash"],
                                    "server_hash": server_hash or local["content_hash"], "server_save_id": (op or {}).get("save_id"),
                                    "format": local.get("format"), "slot": (op or {}).get("slot") or self.settings.get("saves.slot"),
-                                   "unit": self._unit_info(Path(local["unit_path"])) if local.get("unit_path") else None}
+                                   "unit": self._unit_info(Path(local["unit_path"]), local.get("format")) if local.get("unit_path") else None}
                 self._see(rec, (op or {}).get("server_updated_at"))
                 rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
             return result(rid, name, "up_to_date" if has_local or has_server else "no_saves",
@@ -753,13 +846,25 @@ class SaveSync:
                                "server_hash": saved.get("content_hash") or local["content_hash"],
                                "server_save_id": saved.get("id"), "identity_hash": local.get("identity_hash"),
                                "format": local.get("format"), "slot": use_slot,
-                               "unit": self._unit_info(Path(local["unit_path"]))}
+                               "unit": self._unit_info(Path(local["unit_path"]), local.get("format"))}
             rec.doc["conflict"] = None
             self._see(rec, saved.get("updated_at"))
             rec.commit_state(Path(local["state_tmp"]) if local.get("state_tmp") else None)
         rec.note("upload", f"{len(data)} bytes to slot {use_slot}")
         return result(game["rom_id"], game["name"], "uploaded", "Uploaded this device's save to RomM",
                       save_id=saved.get("id"), slot=use_slot)
+
+    def _restore_file(self, ctx: Ctx, game: dict, rec: Record, data: bytes, file_name: str, p: dict, force_local: bool) -> dict:
+        """Writes a downloaded RetroArch save under the game's name. A save that changed here since the last sync is not
+        replaced unless the user chose to."""
+        main = game.get("main_file") or ""
+        if not force_local and rec.last and rec.last.get("format") == "file":
+            now = libretro.collect(Path(ctx.root), main, p["dir"] / "pre", rec.last)
+            if now.get("has_unit") and now.get("changed"):
+                raise FolderRefusal("conflict", "The save on this device changed since the last sync")
+        got = libretro.restore(data, file_name, Path(ctx.root), main)
+        log.info("restored %s into %s", ", ".join(got["written"]), ctx.root)
+        return got
 
     def _restore_card(self, ctx: Ctx, game: dict, rec: Record, unit: Path, p: dict, force_local: bool) -> dict:
         """Writes a card image (sigil's unit) onto the card with sigil: the game's saves only, the rest untouched."""
@@ -843,10 +948,20 @@ class SaveSync:
         unit = p["dir"] / ("incoming.zip" if is_zip else "incoming.bin")
         unit.write_bytes(data)
         if s.get("saves.backups"):
-            cards = [sl.path for sl in ctx.cfg.slots if sl.enabled]
+            if ctx.profile.family == "dolphin":
+                cards = [Path(ctx.root) / "GC"]
+            elif ctx.cfg is None:
+                cards = libretro.files_of(Path(ctx.root), game.get("main_file") or "")
+            else:
+                cards = [sl.path for sl in ctx.cfg.slots if sl.enabled]
             backup_cards(cards, rid, "before-restore", s.get("saves.backup_keep"))
         try:
-            got = (self._restore_folders if is_zip else self._restore_card)(ctx, game, rec, unit, p, force_local)
+            if ctx.profile.family == "dolphin":
+                got = self._restore_card(ctx, game, rec, unit, p, force_local)
+            elif ctx.cfg is None:
+                got = self._restore_file(ctx, game, rec, data, (op or {}).get("file_name") or "", p, force_local)
+            else:
+                got = (self._restore_folders if is_zip else self._restore_card)(ctx, game, rec, unit, p, force_local)
         except savefolders.ArchiveError as e:
             return self._unusable(rec, rid, name, save_id, op, str(e))
         # what a collect gives now is what the server should count as this device's copy
@@ -862,7 +977,7 @@ class SaveSync:
                            "server_hash": got.get("content_hash"), "server_save_id": save_id,
                            "identity_hash": got.get("identity_hash"), "format": post.get("format"),
                            "slot": (op or {}).get("slot") or ((rec.doc.get("conflict") or {}).get("server") or {}).get("slot")
-                           or s.get("saves.slot"), "unit": self._unit_info(unit)}
+                           or s.get("saves.slot"), "unit": self._unit_info(unit, post.get("format"))}
         rec.doc["conflict"] = None
         self._see(rec, stamp)
         from_slot = rec.doc["last"]["slot"]
@@ -941,6 +1056,18 @@ class SaveSync:
                      "backups": list_backups(rom_id)[:3]}
         if not game:
             return out
+        if emulators.group_for_platform(game.get("platform_slug", "")) == "dolphin":
+            d = emulators.resolve_dolphin(self.settings.get("emulators.dolphin.data_dir"), self.settings.get("emulators.dolphin.executable"))
+            out.update({"supported": True, "emulator": d.profile.name, "data_dir": str(d.data_dir),
+                        "data_dir_exists": d.data_dir_exists, "slots": []})
+            return out
+        if emulators.group_for_platform(game.get("platform_slug", "")) == "retroarch":
+            r = libretro.resolve(self.settings.get("emulators.retroarch.data_dir"), self.settings.get("emulators.retroarch.save_dir"),
+                                 self.settings.get("emulators.retroarch.executable"))
+            root, _why = libretro.save_root(r.config, game.get("main_file") or "")
+            out.update({"supported": True, "emulator": r.profile.name, "data_dir": str(root or r.data_dir),
+                        "data_dir_exists": bool(root and root.is_dir()), "slots": []})
+            return out
         got = self._emulator_for(game)
         if got:
             r, _ = got
@@ -960,8 +1087,9 @@ class SaveSync:
 
 
 def emulators_platform(game: dict) -> str | None:
+    """The platform name sigil is asked about for a game: only PS2 reads its disc. RetroArch games need no reading."""
     slug = (game.get("platform_slug") or "").lower()
-    return "ps2" if emulators.group_for_platform(slug) == "ps2" else None
+    return {"ps2": "ps2", "dolphin": "gamecube"}.get(emulators.group_for_platform(slug) or "")
 
 
 def _parse(value: Any) -> float:

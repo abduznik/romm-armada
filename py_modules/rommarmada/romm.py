@@ -246,6 +246,26 @@ class RommClient:
         return self._json("POST", f"/api/saves/{save_id}/downloaded", retries=0,
                           json_body={"device_id": device_id, "content_hash": content_hash})
 
+    # -- save states (RomM keeps them apart from saves: one per file name, no slots, no devices) ---------
+
+    def states(self, rom_id: int) -> list[dict]:
+        return self._json("GET", "/api/states", params={"rom_id": rom_id}) or []
+
+    def upload_state(self, rom_id: int, data: bytes, filename: str, emulator: str) -> dict:
+        body, ctype = multipart(None, [("stateFile", filename, data, "application/octet-stream")])
+        try:
+            r = self.http.request("POST", "/api/states", params={"rom_id": rom_id, "emulator": emulator}, data=body,
+                                  headers={"Content-Type": ctype}, timeout=max(120.0, self.http.timeout), retries=0)
+            return r.json() or {}
+        except (HttpError, NetworkError) as e:
+            raise wrap_error(e) from None
+
+    def download_state(self, state_id: int) -> bytes:
+        try:
+            return self.http.request("GET", f"/api/states/{state_id}/content", timeout=max(120.0, self.http.timeout)).body
+        except (HttpError, NetworkError) as e:
+            raise wrap_error(e) from None
+
     # -- the sync protocol -----------------------------------------------------------------
 
     def negotiate(self, device_id: str, saves: list[dict], rom_ids: list[int] | None = None,

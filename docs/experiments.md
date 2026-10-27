@@ -226,6 +226,37 @@ on into the games just loaded.
 **Checked** in the jsdom harness by asserting that the DOM element is the same before and after the page arrives. Not
 checked in Steam itself.
 
+## 15. RetroArch: what sigil covers and what it does not
+
+**Question.** Armada's store has more emulators than ARMSX2. RetroArch plays most of the 8-bit and 16-bit systems, so it was
+the next one to try.
+
+**What sigil does there.** RetroArch is a frontend: the save depends on the core that runs the game, and sigil has a
+"layout" per core. The default libretro layout fits every core that keeps its battery save under the game's own name:
+`<game>.srm`, plus `<game>.rtc` when the cart has a clock. A trial with the helper showed the limit:
+
+- `locate` (which files are the game's save) works with only the game's file name, on any system.
+- `collect` and `restore` (build and write the unit) need sigil to identify the game first, and sigil can do that only for
+  some systems. A Game Boy ROM worked. A Game Boy Advance, NES or Mega Drive file stopped with `unknown_platform`, and
+  passing a made-up identity did not get round it. sigil's own platform notes agree: those systems are "located", not
+  "synced".
+
+**Decision.** The default row is two files, so the plugin follows it directly (`libretro.py`) instead of through sigil's
+sync: the `.srm` goes up as it is, and with a clock the `.srm` and `.rtc` go up as a flat zip named `<game>.srm.zip`, which
+is what Argosy uploads for the same row. A test runs the helper's `locate --hash` on the same files and checks that its
+artifact name and RomM hash equal the plugin's. Restoring writes the files under *this* device's game name, whatever the
+uploader called theirs, and puts the old files back if the write fails half way.
+
+**Where RetroArch keeps its saves** is the part that varies, so it is read, not assumed: `retroarch.cfg` gives
+`savefile_directory`, `savefiles_in_content_dir` and the two sorting switches. With sorting by core, the core's folder is
+not known until a game has been played once, so a game with no save yet says so instead of guessing a folder. With
+sorting by game folder the name is the folder the game is in. A save that exists is found wherever it is.
+
+**Verified** against a stand-in server with two devices (upload, second device, newer save, conflicts, another client's
+slot, a save that is not a battery save) and against real RomM (hashes, stored names, and a second device restoring the
+`.srm` and `.rtc`). Not verified: a real RetroArch on a handheld. The handheld was not reachable when this was written, so
+where Armada OS's RetroArch keeps its saves is still to be looked at.
+
 ## Dead ends and corrections
 
 - A Python binding for sigil was rejected for the architecture reason in entry 1.
@@ -242,5 +273,6 @@ checked in Steam itself.
 - A real RomM 5.5 or newer, to run the card-image path that servers keeping units use. It is tested against a stand-in
   for the heartbeat flag only.
 - The Show more behaviour and the BIOS download on the handheld itself, and gamepad navigation of every screen.
-- Other emulators and systems. Only PlayStation 2 is wired for saves; downloads work for every platform in the library.
+- Other emulators and systems. PlayStation 2 (ARMSX2, PCSX2) and the RetroArch systems listed in the README are wired for
+  saves; downloads work for every platform in the library. PlayStation 1, DS, N64 and the others need per-core layouts.
 - ES-DE starting a game that was just downloaded.

@@ -15,7 +15,9 @@ const settingsDoc = () => ({
     speed_limit_kbs: 0, min_free_mb: 512, extract_zip: false, resume_on_start: true, remote_installs: false },
   saves: { enabled: true, slot: "armadaos", format: "folders", push_on_exit: true, pull_on_startup: true, pull_when_idle: true, pull_interval_min: 30,
     conflict: "ask", card_type: "folder", backups: true, backup_keep: 5, autocleanup: true, autocleanup_limit: 10, playtime: true, notify: true },
-  emulators: { ps2: { emulator: "auto", data_dir: "", executable: "" } },
+  states: { enabled: true },
+  emulators: { ps2: { emulator: "auto", data_dir: "", executable: "" }, retroarch: { data_dir: "", save_dir: "", executable: "" },
+    dolphin: { data_dir: "", executable: "" } },
   advanced: { request_timeout: 30, debug: false },
 });
 
@@ -614,6 +616,39 @@ describe("the panel", () => {
     assert.match(text(h), /the way Argosy and Freegosy do/);
     assert.doesNotMatch(text(h), /card image/);
     await h.unmount();
+  });
+
+  test("RetroArch games: the home screen counts them, the emulator settings say where their saves go, and the game screen explains the save file", async () => {
+    const retroarch = { name: "RetroArch", data_dir: "/home/armada/.config/retroarch", data_dir_exists: true, found_by: "found",
+      executable: "/home/armada/Applications/RetroArch.AppImage", present: true, games: 2, save_dir: "/home/armada/.config/retroarch/saves",
+      next_to_game: false, sort_by_core: true, sort_by_content: false, running: false };
+    backendWith({
+      overview: () => overview({ retroarch }),
+      rom: () => detail({
+        platform: "Game Boy Advance", platform_slug: "gba", installed: true,
+        local: { main_file: "/home/armada/ROMs/gba/Advance Game.gba", path: "/home/armada/ROMs/gba", size: 16e6, installed_at: "2026-10-25T09:00:00Z" },
+        saves: { rom_id: 101, supported: true, enabled: true, emulator: "RetroArch", slots: [],
+          last: { at: new Date().toISOString(), action: "upload", slot: "armadaos", format: "file",
+            unit: { kind: "file", size: 65_536, contents: ["Advance Game.srm", "Advance Game.rtc"], bytes: 65_536 } } },
+      }),
+    });
+    const h = await mount(<Root />);
+    await settle(3);
+    assert.match(text(h), /RetroArch\s*2 games/);
+    await click(h, "Settings");
+    await click(h, "Emulator");
+    assert.match(text(h), /Saves\s*\/home\/armada\/\.config\/retroarch\/saves/);
+    assert.match(text(h), /Sorted\s*by core/);
+    await h.unmount();
+    const g = await mount(<Root />);
+    await settle(3);
+    await click(g, "Browse the library");
+    await click(g, "PlayStation 2");
+    await click(g, "Test Game (USA)");
+    assert.match(text(g), /64\.0 KB save file: Advance Game\.srm, Advance Game\.rtc/);
+    assert.match(text(g), /the way Argosy does/);
+    assert.doesNotMatch(text(g), /card image|memory card/i);
+    await g.unmount();
   });
 
   test("the save format and the slot are set in the saves settings, with what each means", async () => {

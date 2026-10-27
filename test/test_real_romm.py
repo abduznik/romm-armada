@@ -53,10 +53,13 @@ class RealRommTests(unittest.TestCase):
     def _boot(cls):
         cls.lib = cls.work / "library"
         (cls.lib / "roms" / "ps2").mkdir(parents=True)
+        (cls.lib / "roms" / "gb").mkdir(parents=True)
         for d in ("assets", "resources", "config", "redis"):
             (cls.work / d).mkdir()
         cls.iso = fixtures.make_ps2_iso("SLUS-20152", extra_bytes=3 * 1024 * 1024)
         fixtures.write(str(cls.lib / "roms" / "ps2" / "Test Game (USA).iso"), cls.iso)
+        cls.gb = b"\0" * 0x134 + b"POCKET" + b"\0" * (32768 - 0x134 - 6)         # a Game Boy file: RomM only needs it to be there
+        fixtures.write(str(cls.lib / "roms" / "gb" / "Pocket Game (USA).gb"), cls.gb)
         cls.url = f"http://127.0.0.1:{PORT}"
         net, db = cls.tag + "-net", cls.tag + "-db"
         sh("podman", "network", "create", net)
@@ -123,7 +126,7 @@ class RealRommTests(unittest.TestCase):
         end = time.time() + 180
         while time.time() < end:
             page = cls.admin.get_json("/api/roms", params={"limit": 10})
-            if page.get("total"):
+            if page.get("total", 0) >= 2:
                 return
             time.sleep(3)
         raise RuntimeError("the scan found nothing:\n" + sh("podman", "logs", "--tail", "60", cls.tag, check=False).stdout)
@@ -278,7 +281,7 @@ class RealRommTests(unittest.TestCase):
             # RomM's own checksum of the file is the one the plugin verified against
             self.assertEqual(int(f["crc_hash"], 16), zlib.crc32(self.iso) & 0xFFFFFFFF)
 
-    def installed_device(self, name):
+    def installed_device(self, name, slug="ps2"):
         d = self.device(name)
         self.pair(d, via_code=False)
         from rommarmada.http import HttpClient
@@ -286,11 +289,12 @@ class RealRommTests(unittest.TestCase):
         from rommarmada import library
         with d.active():
             client = RommClient(HttpClient(self.url, token=d.settings.get("auth.token"), timeout=30))
-            rom = client.rom(client.roms(None)["items"][0]["id"])
+            pid = next(p["id"] for p in client.platforms() if p["slug"] == slug)
+            rom = client.rom(client.roms(pid)["items"][0]["id"])
             lay = library.Layout(d.settings.get("library.root"), "esde", {})
             f = rom["files"][0]
             dest = lay.destination(rom, f)
-            fixtures.write(str(dest), self.iso)
+            fixtures.write(str(dest), self.iso if slug == "ps2" else self.gb)
             d.manifest.put(library.make_entry(rom, lay, [(f, dest)], dest))
             self.engine(d)
         d.rom_id = rom["id"]
@@ -337,6 +341,74 @@ class RealRommTests(unittest.TestCase):
         self.assertEqual(b.save_bytes(), b"chapter one" * 80)
         with b.active():
             self.assertEqual(b.sync.sync([rid])[0]["status"], "up_to_date")
+
+    def test_04c_retroarch_saves_on_real_romm(self):
+        """A Game Boy game's save, as RetroArch keeps it: the .srm as it is, a zip when there is a clock too, hashed by RomM."""
+        a, b = self.installed_device("ra-a", "gb"), self.installed_device("ra-b", "gb")
+        rid = a.rom_id
+        for d in (a, b):
+            folder = d.home / ".config" / "retroarch"
+            (folder / "saves").mkdir(parents=True)
+            (folder / "retroarch.cfg").write_text(f'savefile_directory = "{folder / "saves"}"\n')
+        saves = a.home / ".config" / "retroarch" / "saves"
+        data = os.urandom(8192)
+        (saves / "Pocket Game (USA).srm").write_bytes(data)
+        with a.active():
+            r = a.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "uploaded", r)
+        (s,) = [x for x in self.admin.get_json("/api/saves", params={"rom_id": rid}) if x.get("slot") == "armadaos"]
+        self.assertEqual((s["emulator"], s["content_hash"]), ("armadaos", hashlib.md5(data).hexdigest()))
+        self.assertRegex(s["file_name"], r"^Pocket Game \(USA\) \[.*\]\.srm$")
+        self.assertEqual(self.admin.request("GET", f"/api/saves/{s['id']}/content").body, data)
+        with a.active():
+            self.assertEqual(a.sync.sync([rid])[0]["status"], "up_to_date")
+
+        # with a clock: a flat zip, whose hash RomM computes from its entries, the way the plugin did
+        time.sleep(1.1)
+        (saves / "Pocket Game (USA).srm").write_bytes(data + b"more")
+        (saves / "Pocket Game (USA).rtc").write_bytes(b"\x07" * 48)
+        with a.active():
+            r = a.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "uploaded", r)
+        newest = max((x for x in self.admin.get_json("/api/saves", params={"rom_id": rid}) if x.get("slot") == "armadaos"),
+                     key=lambda x: x["updated_at"])
+        self.assertRegex(newest["file_name"], r"^Pocket Game \(USA\)\.srm \[.*\]\.zip$")
+        rec = json.loads((a.plugin / "settings" / "state" / "sync" / f"{rid}.json").read_text())
+        self.assertEqual((rec["last"]["local_hash"], rec["last"]["format"]), (newest["content_hash"], "file"))
+
+        with b.active():
+            r = b.sync.sync([rid])[0]
+        self.assertEqual(r["status"], "downloaded", r)
+        mine = b.home / ".config" / "retroarch" / "saves"
+        self.assertEqual((mine / "Pocket Game (USA).srm").read_bytes(), data + b"more")
+        self.assertEqual((mine / "Pocket Game (USA).rtc").read_bytes(), b"\x07" * 48)
+        with b.active():
+            self.assertEqual(b.sync.sync([rid])[0]["status"], "up_to_date")
+
+    def test_04d_save_states_on_real_romm(self):
+        """A PS2 save state goes to RomM's states under its own name and emulator, replaces itself, and reaches a second device."""
+        a, b = self.installed_device("st-a"), self.installed_device("st-b")
+        rid = a.rom_id
+        name = "SLUS-20152 (12345678).01.p2s"
+        folder = a.home / ".config" / "ARMSX2" / "sstates"
+        folder.mkdir(parents=True)
+        (folder / name).write_bytes(os.urandom(70_000))
+        with a.active():
+            r = a.sync.sync([rid])[0]
+        self.assertIn("1 save state uploaded", r["message"], r)
+        (st,) = self.admin.get_json("/api/states", params={"rom_id": rid})
+        self.assertEqual((st["file_name"], st["emulator"]), (name, "armsx2"))
+        self.assertEqual(self.admin.request("GET", f"/api/states/{st['id']}/content").body, (folder / name).read_bytes())
+        time.sleep(1.1)
+        (folder / name).write_bytes(os.urandom(70_000))
+        with a.active():
+            a.sync.sync([rid])
+        (st2,) = self.admin.get_json("/api/states", params={"rom_id": rid})
+        self.assertEqual(st2["id"], st["id"], "the same name replaces the state")
+        with b.active():
+            r = b.sync.sync([rid])[0]
+        self.assertIn("1 save state downloaded", r["message"], r)
+        self.assertEqual((b.home / ".config" / "ARMSX2" / "sstates" / name).read_bytes(), (folder / name).read_bytes())
 
     def test_04b_card_image_format_on_real_romm(self):
         """sigil's per-game card image, for servers that keep units (RomM 5.5 and newer) or when asked for."""

@@ -157,6 +157,25 @@ class SafetyTests(DlBase):
         self.assertFalse((self.home / "ROMs" / "ps2" / "Bad.iso").exists())
         self.assertFalse((self.home / "ROMs" / "ps2" / "Bad.iso.part").exists())
 
+    def test_a_zipped_game_is_checked_against_the_files_inside_it(self):
+        """RomM hashes what is in a zipped game, not the zip, so the zip's own CRC is not the one it lists."""
+        import io
+        import zlib
+        inner = b"rom data" * 500
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("Game (E).gba", inner)
+            z.writestr("Game (J).gba", b"another version" * 300)
+        rid = self.mock.add_rom(self.pid, "Zipped", [("Zipped.zip", buf.getvalue())])
+        self.mock.roms[rid]["files"][0]["crc_hash"] = format(zlib.crc32(inner) & 0xFFFFFFFF, "08x")
+        self.dm.enqueue(self.rom(rid))
+        self.assertEqual(self.wait(rid)["state"], "done")
+        self.assertTrue((self.home / "ROMs" / "ps2" / "Zipped.zip").exists())
+        bad = self.mock.add_rom(self.pid, "Zipped bad", [("Zipped bad.zip", buf.getvalue())])
+        self.mock.roms[bad]["files"][0]["crc_hash"] = "deadbeef"
+        self.dm.enqueue(self.rom(bad))
+        self.assertEqual(self.wait(bad, timeout=40)["state"], "error")
+
     def test_verification_can_be_turned_off(self):
         rid = self.mock.add_rom(self.pid, "Skip", [("Skip.iso", b"bytes" * 100)])
         self.mock.roms[rid]["files"][0]["crc_hash"] = "deadbeef"

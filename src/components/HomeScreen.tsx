@@ -184,6 +184,18 @@ export function HomeScreen({ nav }: { nav: Nav }) {
             {em.data_dir_exists ? "" : " (not run yet)"}
           </Info>
         ) : null}
+        {ov?.dolphin && (ov.dolphin.present || ov.dolphin.games > 0) ? (
+          <Info label="Dolphin">
+            {ov.dolphin.games > 0 ? `${ov.dolphin.games} ${ov.dolphin.games === 1 ? "game" : "games"}` : "found"}
+            {ov.dolphin.data_dir_exists ? "" : " (not run yet)"}
+          </Info>
+        ) : null}
+        {ov?.retroarch && (ov.retroarch.present || ov.retroarch.games > 0) ? (
+          <Info label="RetroArch">
+            {ov.retroarch.games > 0 ? `${ov.retroarch.games} ${ov.retroarch.games === 1 ? "game" : "games"}` : "found"}
+            {ov.retroarch.data_dir_exists ? "" : " (not run yet)"}
+          </Info>
+        ) : null}
       </PanelSection>
 
       <PanelSection title="This device">

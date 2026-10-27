@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 """What the plugin knows about each emulator: where its data lives, which sigil layout reads its saves,
-how to tell it is running. PlayStation 2 first: ARMSX2 (the Arm64 PCSX2 fork) and PCSX2 itself.
+how to tell it is running. PlayStation 2 first: ARMSX2 (the Arm64 PCSX2 fork) and PCSX2 itself, then RetroArch for the
+8-bit and 16-bit systems whose cores keep one `<game>.srm` beside the other saves.
 
 Adding an emulator is a new profile here and a layout id from sigil (docs/platforms/README.md in
-argosy-sigil lists them). Nothing else in the plugin names an emulator.
+argosy-sigil lists them).
 """
 from __future__ import annotations
 
@@ -135,8 +136,97 @@ PROFILES: dict[str, Profile] = {
     ),
 }
 
+# --- RetroArch ---------------------------------------------------------------------------------------
+
+# RomM platform slug -> the platform name sigil knows, or "" where sigil reads nothing from the game. These are the systems
+# whose libretro cores keep their save as `<game>.srm` (and `<game>.rtc` for a clock) in RetroArch's save folder, which
+# is what sigil's default libretro row describes. Systems whose cores keep memory cards or folders (PlayStation, Nintendo
+# DS, Nintendo 64, Dreamcast) are not here: they need a row per core.
+RETROARCH_SYSTEMS = {
+    "gb": "gb", "gbc": "gbc", "gba": "", "nes": "", "famicom": "", "snes": "", "sfam": "",
+    "genesis-slash-megadrive": "", "genesis": "", "sega-mega-drive": "", "mega-drive": "",
+    "sms": "", "sega-master-system": "", "gamegear": "", "sega-game-gear": "",
+}
+
+
+def _retroarch_dirs() -> list[Path]:
+    home = paths.user_home()
+    return [_xdg_config() / "retroarch", home / ".config" / "retroarch",
+            home / ".var" / "app" / "org.libretro.RetroArch" / "config" / "retroarch", home / ".retroarch"]
+
+
+def _retroarch_exes() -> list[str]:
+    h = str(paths.user_home())
+    return (_globs(f"{h}/Applications/RetroArch*.AppImage", f"{h}/Applications/retroarch*.AppImage",
+                   f"{h}/.local/bin/RetroArch*.AppImage", f"{h}/Applications/RetroArch*/retroarch", f"{h}/Applications/RetroArch*/RetroArch*")
+            + _which("retroarch", "RetroArch")
+            + _globs(f"{h}/.local/share/flatpak/exports/bin/org.libretro.RetroArch", "/var/lib/flatpak/exports/bin/org.libretro.RetroArch"))
+
+
+PROFILES["retroarch"] = Profile(
+    id="retroarch", name="RetroArch", romm_emulator="retroarch", platform_slugs=tuple(RETROARCH_SYSTEMS), sigil_platform="",
+    layout="libretro", compat=("retroarch",), process_names=("retroarch", "retroarch.appimage", "retroarch-bin"),
+    data_dirs=_retroarch_dirs, executables=_retroarch_exes, default_args=(), family="libretro",
+)
+
+# --- Dolphin -----------------------------------------------------------------------------------------
+
+DOLPHIN_SLUGS = ("gc", "ngc", "gamecube", "nintendo-gamecube")
+
+
+def _xdg_data() -> Path:
+    x = os.environ.get("XDG_DATA_HOME", "")
+    return Path(x) if x and os.path.isabs(x) else paths.user_home() / ".local" / "share"
+
+
+def _dolphin_dirs() -> list[Path]:
+    """Dolphin's User folder (the one with GC/ and Wii/), best first. The Flatpak keeps it under its own data folder."""
+    home = paths.user_home()
+    return [home / ".var" / "app" / "org.DolphinEmu.dolphin-emu" / "data" / "dolphin-emu", _xdg_data() / "dolphin-emu",
+            home / ".local" / "share" / "dolphin-emu", home / ".dolphin-emu"]
+
+
+def _dolphin_exes() -> list[str]:
+    h = str(paths.user_home())
+    return (_globs(f"{h}/Applications/Dolphin*.AppImage", f"{h}/Applications/dolphin*.AppImage")
+            + _which("dolphin-emu", "dolphin-emu-nogui")
+            + _globs(f"{h}/.local/share/flatpak/exports/bin/org.DolphinEmu.dolphin-emu",
+                     "/var/lib/flatpak/exports/bin/org.DolphinEmu.dolphin-emu"))
+
+
+PROFILES["dolphin"] = Profile(
+    id="dolphin", name="Dolphin", romm_emulator="dolphin", platform_slugs=DOLPHIN_SLUGS, sigil_platform="gamecube",
+    layout="dolphin_standalone", compat=("dolphin",), process_names=("dolphin-emu", "dolphin-emu-nogui", "dolphin-emu.appimage"),
+    data_dirs=_dolphin_dirs, executables=_dolphin_exes, default_args=("-b", "-e"), family="dolphin",
+)
+
+
+def dolphin_options(data_dir: Path) -> dict[str, str]:
+    """The Dolphin.ini settings that decide where GameCube saves are (a GCI folder or a raw card, and its size)."""
+    data_dir = Path(data_dir)
+    home = paths.user_home()
+    cands = [data_dir / "Config" / "Dolphin.ini", data_dir.parent.parent / "config" / "dolphin-emu" / "Dolphin.ini",
+             _xdg_config() / "dolphin-emu" / "Dolphin.ini", home / ".config" / "dolphin-emu" / "Dolphin.ini"]
+    for c in cands:
+        core = read_ini(c).get("Core")
+        if core:
+            return {k: core[k] for k in ("SlotA", "MemoryCardSize") if core.get(k) not in (None, "")}
+    return {}
+
+
+def resolve_dolphin(data_dir_setting: str = "", exe_setting: str = "") -> Resolved:
+    profile = PROFILES["dolphin"]
+    if data_dir_setting:
+        folder, why = Path(data_dir_setting), "setting"
+    else:
+        found = next((d for d in profile.data_dirs() if d.is_dir()), None)
+        folder, why = (found, "found") if found else (profile.data_dirs()[0], "default")
+    exes = [exe_setting] if exe_setting else profile.executables()
+    return Resolved(profile, folder, folder / "Config" / "Dolphin.ini", folder.is_dir(), exes[0] if exes else "", why)
+
+
 # RomM platform slug -> setting group (the key under `emulators.` in the settings)
-PLATFORM_GROUPS = {"ps2": "ps2"}
+PLATFORM_GROUPS = {"ps2": "ps2", **{slug: "retroarch" for slug in RETROARCH_SYSTEMS}, **{slug: "dolphin" for slug in DOLPHIN_SLUGS}}
 
 
 def group_for_platform(platform_slug: str) -> str | None:
@@ -419,6 +509,19 @@ def is_running(profile: Profile, proc_root: str = "/proc") -> bool:
 
 
 def all_ps2_process_names() -> tuple:
+    return tuple(sorted({n for p in PROFILES.values() if p.family == "pcsx2" for n in p.process_names}))
+
+
+def process_names_for(group: str | None) -> tuple:
+    """The program names of the emulators that play a setting group's games (all of them when the group is unknown)."""
+    if group == "ps2":
+        return all_ps2_process_names()
+    if group in ("retroarch", "dolphin"):
+        return PROFILES[group].process_names
+    return all_process_names()
+
+
+def all_process_names() -> tuple:
     return tuple(sorted({n for p in PROFILES.values() for n in p.process_names}))
 
 
